@@ -1,10 +1,11 @@
 {
-    "account_supported": false,
+    "account_supported": true,
     "api": "winbiap",
     "city": "Offenbach",
     "country": "Deutschland",
     "data": {
-        "baseurl": "http://webopac.offenbach.winbiap.net"
+        "baseurl": "http://opac.winbiap.net/offenbach",
+		"customssl": true
     },
     "geo": [
         50.09563620000001,

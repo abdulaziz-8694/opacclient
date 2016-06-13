@@ -28,6 +28,8 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.message.BasicNameValuePair;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.jsoup.Jsoup;
@@ -42,8 +44,6 @@ import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -54,19 +54,24 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-import de.geeksfactory.opacclient.NotReachableException;
 import de.geeksfactory.opacclient.i18n.StringProvider;
+import de.geeksfactory.opacclient.networking.HttpClientFactory;
 import de.geeksfactory.opacclient.networking.HttpUtils;
+import de.geeksfactory.opacclient.networking.NotReachableException;
 import de.geeksfactory.opacclient.objects.Account;
 import de.geeksfactory.opacclient.objects.AccountData;
+import de.geeksfactory.opacclient.objects.Copy;
 import de.geeksfactory.opacclient.objects.Detail;
 import de.geeksfactory.opacclient.objects.DetailledItem;
 import de.geeksfactory.opacclient.objects.Filter;
 import de.geeksfactory.opacclient.objects.Filter.Option;
+import de.geeksfactory.opacclient.objects.LentItem;
 import de.geeksfactory.opacclient.objects.Library;
+import de.geeksfactory.opacclient.objects.ReservedItem;
 import de.geeksfactory.opacclient.objects.SearchRequestResult;
 import de.geeksfactory.opacclient.objects.SearchResult;
 import de.geeksfactory.opacclient.objects.SearchResult.MediaType;
+import de.geeksfactory.opacclient.objects.Volume;
 import de.geeksfactory.opacclient.searchfields.DropdownSearchField;
 import de.geeksfactory.opacclient.searchfields.SearchField;
 import de.geeksfactory.opacclient.searchfields.SearchField.Meaning;
@@ -195,35 +200,14 @@ public class Bibliotheca extends BaseApi {
             }
         }
 
-        List<Map<String, String>> dropdownValues = new ArrayList<>();
-        Map<String, String> valueMap = new HashMap<>();
-        valueMap.put("key", "1");
-        valueMap.put("value",
-                stringProvider.getString(StringProvider.ORDER_DEFAULT));
-        dropdownValues.add(valueMap);
-        valueMap = new HashMap<>();
-        valueMap.put("key", "2:desc");
-        valueMap.put("value",
-                stringProvider.getString(StringProvider.ORDER_YEAR_DESC));
-        dropdownValues.add(valueMap);
-        valueMap = new HashMap<>();
-        valueMap.put("key", "2:asc");
-        valueMap.put("value",
-                stringProvider.getString(StringProvider.ORDER_YEAR_ASC));
-        dropdownValues.add(valueMap);
-        valueMap = new HashMap<>();
-        valueMap.put("key", "3:desc");
-        valueMap.put("value",
-                stringProvider.getString(StringProvider.ORDER_CATEGORY_DESC));
-        dropdownValues.add(valueMap);
-        valueMap = new HashMap<>();
-        valueMap.put("key", "3:asc");
-        valueMap.put("value",
-                stringProvider.getString(StringProvider.ORDER_CATEGORY_ASC));
-        dropdownValues.add(valueMap);
         DropdownSearchField orderField = new DropdownSearchField("orderselect",
                 stringProvider.getString(StringProvider.ORDER), false,
-                dropdownValues);
+                null);
+        orderField.addDropdownValue("1", stringProvider.getString(StringProvider.ORDER_DEFAULT));
+        orderField.addDropdownValue("2:desc", stringProvider.getString(StringProvider.ORDER_YEAR_DESC));
+        orderField.addDropdownValue("2:asc", stringProvider.getString(StringProvider.ORDER_YEAR_ASC));
+        orderField.addDropdownValue("3:desc", stringProvider.getString(StringProvider.ORDER_CATEGORY_DESC));
+        orderField.addDropdownValue("3:asc", stringProvider.getString(StringProvider.ORDER_CATEGORY_ASC));
         orderField.setMeaning(Meaning.ORDER);
         fields.add(orderField);
 
@@ -243,14 +227,9 @@ public class Bibliotheca extends BaseApi {
             DropdownSearchField field = new DropdownSearchField();
             field.setDisplayName(name);
             field.setId(input.attr("name"));
-            List<Map<String, String>> options = new ArrayList<>();
             for (Element option : input.select("option")) {
-                Map<String, String> map = new HashMap<>();
-                map.put("key", option.attr("value"));
-                map.put("value", option.text());
-                options.add(map);
+                field.addDropdownValue(option.attr("value"), option.text());
             }
-            field.setDropdownValues(options);
             return field;
         } else {
             return null;
@@ -274,8 +253,8 @@ public class Bibliotheca extends BaseApi {
     }
 
     @Override
-    public void init(Library lib) {
-        super.init(lib);
+    public void init(Library lib, HttpClientFactory httpClientFactory) {
+        super.init(lib, httpClientFactory);
         this.library = lib;
         this.data = lib.getData();
 
@@ -487,7 +466,7 @@ public class Bibliotheca extends BaseApi {
             if (tr.child(0).hasClass("detail_feld")) {
                 String title = tr.child(0).text();
                 String content = tr.child(1).text();
-                if (title.equals("Gesamtwerk:")) {
+                if (title.equals("Gesamtwerk:") || title.equals("Erschienen in:")) {
                     try {
                         if (tr.child(1).select("a").size() > 0) {
                             Element link = tr.child(1).select("a").first();
@@ -531,35 +510,36 @@ public class Bibliotheca extends BaseApi {
                     Element th = ths.get(i);
                     String head = th.text().trim();
                     if (head.equals("Zweigstelle")) {
-                        copymap.put(DetailledItem.KEY_COPY_BRANCH, i);
+                        copymap.put("branch", i);
                     } else if (head.equals("Abteilung")) {
-                        copymap.put(DetailledItem.KEY_COPY_DEPARTMENT, i);
-                    } else if (head.equals("Bereich")) {
-                        copymap.put(DetailledItem.KEY_COPY_LOCATION, i);
-                    } else if (head.equals("Standort")) {
-                        copymap.put(DetailledItem.KEY_COPY_LOCATION, i);
+                        copymap.put("department", i);
+                    } else if (head.equals("Bereich")
+                            || head.equals("Standort")) {
+                        copymap.put("location", i);
                     } else if (head.equals("Signatur")) {
-                        copymap.put(DetailledItem.KEY_COPY_SHELFMARK, i);
+                        copymap.put("signature", i);
                     } else if (head.equals("Barcode")
                             || head.equals("Medien-Nummer")) {
-                        copymap.put(DetailledItem.KEY_COPY_BARCODE, i);
+                        copymap.put("barcode", i);
                     } else if (head.equals("Status")) {
-                        copymap.put(DetailledItem.KEY_COPY_STATUS, i);
+                        copymap.put("status", i);
                     } else if (head.equals("Frist")
                             || head.matches("Verf.+gbar")) {
-                        copymap.put(DetailledItem.KEY_COPY_RETURN, i);
+                        copymap.put("returndate", i);
                     } else if (head.equals("Vorbestellungen")
                             || head.equals("Reservierungen")) {
-                        copymap.put(DetailledItem.KEY_COPY_RESERVATIONS, i);
+                        copymap.put("reservations", i);
                     }
                 }
             }
             Elements exemplartrs = doc
                     .select(".exemplartab .tabExemplar, .exemplartab .tabExemplar_");
+            DateTimeFormatter
+                    fmt = DateTimeFormat.forPattern("dd.MM.yyyy").withLocale(Locale.GERMAN);
             for (int i = 0; i < exemplartrs.size(); i++) {
                 Element tr = exemplartrs.get(i);
 
-                Map<String, String> e = new HashMap<>();
+                Copy copy = new Copy();
 
                 Iterator<?> keys = copymap.keys();
                 while (keys.hasNext()) {
@@ -571,11 +551,15 @@ public class Bibliotheca extends BaseApi {
                         index = -1;
                     }
                     if (index >= 0) {
-                        e.put(key, tr.child(index).text());
+                        try {
+                            copy.set(key, tr.child(index).text(), fmt);
+                        } catch (IllegalArgumentException e) {
+                            e.printStackTrace();
+                        }
                     }
                 }
 
-                result.addCopy(e);
+                result.addCopy(copy);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -586,10 +570,10 @@ public class Bibliotheca extends BaseApi {
             for (int i = 0; i < bandtrs.size(); i++) {
                 Element tr = bandtrs.get(i);
 
-                Map<String, String> e = new HashMap<>();
-                e.put(DetailledItem.KEY_CHILD_ID, tr.attr("href").split("=")[1]);
-                e.put(DetailledItem.KEY_CHILD_TITLE, tr.text());
-                result.addVolume(e);
+                Volume volume = new Volume();
+                volume.setId(tr.attr("href").split("=")[1]);
+                volume.setTitle(tr.text());
+                result.addVolume(volume);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -704,7 +688,7 @@ public class Bibliotheca extends BaseApi {
                             .getElementsByClass("kontomeldung").get(0).text()
                             .trim()});
                 }
-                Pattern p = Pattern.compile("geb.hr", Pattern.MULTILINE);
+                Pattern p = Pattern.compile("geb.hr", Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
                 for (Element div : doc.select(".kontozeile_center")) {
                     for (String text : Jsoup
                             .parse(div.html().replaceAll("(?i)<br[^>]*>",
@@ -715,6 +699,13 @@ public class Bibliotheca extends BaseApi {
                             details.add(new String[]{text.trim()});
                         }
                     }
+                }
+
+                if (doc.select("#vorbest").size() > 0 &&
+                        doc.select("#vorbest").val().contains("(")) {
+                    // Erlangen uses "Kostenpflichtige Vorbestellung (1 Euro)"
+                    // as the label of its reservation button
+                    details.add(new String[]{doc.select("#vorbest").val().trim()});
                 }
 
                 for (Element row : doc.select(".kontozeile_center table tr")) {
@@ -973,19 +964,10 @@ public class Bibliotheca extends BaseApi {
             start();
         }
 
-        if (acc.getName() == null || acc.getName().equals("null")) {
-            return null;
-        }
-
         List<NameValuePair> nameValuePairs;
-        // nameValuePairs.add(new BasicNameValuePair("link_konto.x", "0"));
-        // nameValuePairs.add(new BasicNameValuePair("link_konto.y", "0"));
-        // String html = httpPost(opac_url + "/index.asp",
-        // new UrlEncodedFormEntity(nameValuePairs), "ISO-8859-1");
         String html = httpGet(opac_url + "/index.asp?kontofenster=start",
                 "ISO-8859-1");
         Document doc = Jsoup.parse(html);
-
         if (doc.select("input[name=AUSWEIS]").size() > 0) {
             // Login vonnöten
             nameValuePairs = new ArrayList<>();
@@ -1005,39 +987,33 @@ public class Bibliotheca extends BaseApi {
                     nameValuePairs), "ISO-8859-1", true);
             doc = Jsoup.parse(html);
         }
-        // } else if (response.getStatusLine().getStatusCode() == 302) {
-        // Already logged in
-        // html = httpGet(opac_url + "/index.asp?target=konto",
-        // "ISO-8859-1",
-        // true);
-        // } else if (response.getStatusLine().getStatusCode() >= 400) {
-        // throw new NotReachableException();
-        // }
-
         if (doc.getElementsByClass("kontomeldung").size() == 1) {
             throw new OpacErrorException(doc.getElementsByClass("kontomeldung")
                                             .get(0).text());
         }
-
-        logged_in = System.currentTimeMillis();
         logged_in_as = acc;
+        logged_in = System.currentTimeMillis();
+        return parse_account(acc, doc, data);
+    }
 
+    public static AccountData parse_account(Account acc, Document doc, JSONObject data)
+            throws JSONException, NotReachableException {
         JSONObject copymap = data.getJSONObject("accounttable");
 
-        List<Map<String, String>> media = new ArrayList<>();
+        List<LentItem> media = new ArrayList<>();
 
         if (doc.select(".kontozeile_center table").size() == 0) {
-            return null;
+            throw new NotReachableException();
         }
 
         Elements exemplartrs = doc.select(".kontozeile_center table").get(0)
                                   .select("tr.tabKonto");
 
-        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy", Locale.GERMAN);
+        DateTimeFormatter fmt = DateTimeFormat.forPattern("dd.MM.yyyy").withLocale(Locale.GERMAN);
 
         for (int i = 0; i < exemplartrs.size(); i++) {
             Element tr = exemplartrs.get(i);
-            Map<String, String> e = new HashMap<>();
+            LentItem item = new LentItem();
 
             Iterator<?> keys = copymap.keys();
             while (keys.hasNext()) {
@@ -1049,30 +1025,25 @@ public class Bibliotheca extends BaseApi {
                     index = -1;
                 }
                 if (index >= 0) {
-                    if (key.equals(AccountData.KEY_LENT_LINK)) {
+                    if (key.equals("prolongurl")) {
                         if (tr.child(index).children().size() > 0) {
-                            e.put(key, tr.child(index).child(0).attr("href"));
-                            e.put(AccountData.KEY_LENT_RENEWABLE,
-                                    tr.child(index).child(0).attr("href")
-                                      .contains("vermsg") ? "N" : "Y");
+                            item.setProlongData(tr.child(index).child(0).attr("href"));
+                            item.setRenewable(
+                                    !tr.child(index).child(0).attr("href").contains("vermsg"));
+                        }
+                    } else if (key.equals("returndate")) {
+                        try {
+                            item.setDeadline(fmt.parseLocalDate(tr.child(index).text()));
+                        } catch (IllegalArgumentException e1) {
+                            e1.printStackTrace();
                         }
                     } else {
-                        e.put(key, tr.child(index).text());
+                        item.set(key, tr.child(index).text());
                     }
                 }
             }
 
-            if (e.containsKey(AccountData.KEY_LENT_DEADLINE)) {
-                try {
-                    e.put(AccountData.KEY_LENT_DEADLINE_TIMESTAMP, String
-                            .valueOf(sdf.parse(
-                                    e.get(AccountData.KEY_LENT_DEADLINE))
-                                        .getTime()));
-                } catch (ParseException e1) {
-                    e1.printStackTrace();
-                }
-            }
-            media.add(e);
+            media.add(item);
         }
         assert (doc.select(".kontozeile_center table").get(0).select("tr")
                    .size() > 0);
@@ -1080,12 +1051,12 @@ public class Bibliotheca extends BaseApi {
 
         copymap = data.getJSONObject("reservationtable");
 
-        List<Map<String, String>> reservations = new ArrayList<>();
+        List<ReservedItem> reservations = new ArrayList<>();
         exemplartrs = doc.select(".kontozeile_center table").get(1)
                          .select("tr.tabKonto");
         for (int i = 0; i < exemplartrs.size(); i++) {
             Element tr = exemplartrs.get(i);
-            Map<String, String> e = new HashMap<>();
+            ReservedItem item = new ReservedItem();
 
             Iterator<?> keys = copymap.keys();
             while (keys.hasNext()) {
@@ -1097,17 +1068,29 @@ public class Bibliotheca extends BaseApi {
                     index = -1;
                 }
                 if (index >= 0) {
-                    if (key.equals(AccountData.KEY_RESERVATION_CANCEL)) {
+                    if (key.equals("cancelurl")) {
                         if (tr.child(index).children().size() > 0) {
-                            e.put(key, tr.child(index).child(0).attr("href"));
+                            item.setCancelData(tr.child(index).child(0).attr("href"));
+                        }
+                    } else if (key.equals("availability")) {
+                        try {
+                            item.setReadyDate(fmt.parseLocalDate(tr.child(index).text()));
+                        } catch (IllegalArgumentException e1) {
+                            item.setStatus(tr.child(index).text());
+                        }
+                    } else if (key.equals("expirationdate")) {
+                        try {
+                            item.setExpirationDate(fmt.parseLocalDate(tr.child(index).text()));
+                        } catch (IllegalArgumentException e1) {
+                            item.setStatus(tr.child(index).text());
                         }
                     } else {
-                        e.put(key, tr.child(index).text());
+                        item.set(key, tr.child(index).text());
                     }
                 }
             }
 
-            reservations.add(e);
+            reservations.add(item);
         }
         assert (doc.select(".kontozeile_center table").get(1).select("tr")
                    .size() > 0);
@@ -1142,63 +1125,6 @@ public class Bibliotheca extends BaseApi {
     }
 
     @Override
-    public boolean isAccountSupported(Library library) {
-        return !library.getData().isNull("accounttable");
-    }
-
-    @Override
-    public boolean isAccountExtendable() {
-        return true;
-    }
-
-    @Override
-    public String getAccountExtendableInfo(Account acc)
-            throws IOException {
-        if (!initialised) {
-            start();
-        }
-
-        String html = "";
-
-        if (acc.getName() == null || acc.getName().equals("null")) {
-            return null;
-        }
-
-        // Needs login
-        HttpPost httppost = new HttpPost(opac_url + "/index.asp");
-        List<NameValuePair> nameValuePairs = new ArrayList<>(2);
-        nameValuePairs.add(new BasicNameValuePair("link_konto.x", "0"));
-        nameValuePairs.add(new BasicNameValuePair("link_konto.y", "0"));
-        httppost.setEntity(new UrlEncodedFormEntity(nameValuePairs));
-        HttpResponse response = http_client.execute(httppost);
-
-        if (response.getStatusLine().getStatusCode() == 200) {
-            // Needs login
-            HttpUtils.consume(response.getEntity());
-            nameValuePairs = new ArrayList<>(2);
-            nameValuePairs
-                    .add(new BasicNameValuePair("AUSWEIS", acc.getName()));
-            nameValuePairs
-                    .add(new BasicNameValuePair("PWD", acc.getPassword()));
-            nameValuePairs.add(new BasicNameValuePair("B1", "weiter"));
-            nameValuePairs.add(new BasicNameValuePair("target", "konto"));
-            nameValuePairs.add(new BasicNameValuePair("type", "K"));
-            html = httpPost(opac_url + "/index.asp", new UrlEncodedFormEntity(
-                    nameValuePairs), getDefaultEncoding());
-        } else if (response.getStatusLine().getStatusCode() == 302) {
-            // Already logged in
-            HttpUtils.consume(response.getEntity());
-            html = httpGet(opac_url + "/index.asp?target=konto",
-                    getDefaultEncoding());
-        } else if (response.getStatusLine().getStatusCode() == 500) {
-            throw new NotReachableException();
-        }
-
-        return html;
-
-    }
-
-    @Override
     public String getShareUrl(String id, String title) {
         try {
             return "http://opacapp.de/:" + library.getIdent() + ":" + id + ":"
@@ -1211,8 +1137,7 @@ public class Bibliotheca extends BaseApi {
 
     @Override
     public int getSupportFlags() {
-        int flags = SUPPORT_FLAG_ACCOUNT_EXTENDABLE
-                | SUPPORT_FLAG_CHANGE_ACCOUNT;
+        int flags = SUPPORT_FLAG_CHANGE_ACCOUNT | SUPPORT_FLAG_WARN_RESERVATION_FEES;
         flags |= SUPPORT_FLAG_ENDLESS_SCROLLING;
         if (!data.has("disableProlongAll")) {
             flags |= SUPPORT_FLAG_ACCOUNT_PROLONG_ALL;

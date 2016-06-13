@@ -36,6 +36,7 @@ Thumbs.db
 .gradle
 local.properties
 /opacclient/.idea/*
+/.idea/*
 *.iml
 .DS_Store
 build/
@@ -45,3 +46,9 @@ upload.sh
 release.sh
 
 *.keystore
+
+opacclient/captures/
+opacclient/libs/
+*.bak
+opacclient/tmp/
+

@@ -29,12 +29,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import de.geeksfactory.opacclient.NotReachableException;
 import de.geeksfactory.opacclient.OpacClient;
 import de.geeksfactory.opacclient.R;
-import de.geeksfactory.opacclient.SSLSecurityException;
 import de.geeksfactory.opacclient.apis.OpacApi.OpacErrorException;
 import de.geeksfactory.opacclient.frontend.ResultsAdapterEndless.OnLoadMoreListener;
+import de.geeksfactory.opacclient.networking.NotReachableException;
+import de.geeksfactory.opacclient.networking.SSLSecurityException;
 import de.geeksfactory.opacclient.objects.Account;
 import de.geeksfactory.opacclient.objects.SearchRequestResult;
 import de.geeksfactory.opacclient.objects.SearchResult;
@@ -160,9 +160,7 @@ public class SearchResultListFragment extends CustomListFragment {
 
     private void performGoogleSearch(final String query) {
         AccountDataSource data = new AccountDataSource(getActivity());
-        data.open();
         final List<Account> accounts = data.getAllAccounts();
-        data.close();
 
         if (accounts.size() == 0) {
             Toast.makeText(getActivity(), R.string.welcome_select,
@@ -406,6 +404,10 @@ public class SearchResultListFragment extends CustomListFragment {
 
     public void loaded(SearchRequestResult searchresult) {
         try {
+            if (searchresult.getPage_index() == 0 && searchresult.getTotal_result_count() > 0
+                    && searchresult.getResults().size() == 0) {
+                showConnectivityError(getResources().getString(R.string.connection_error_detail));
+            }
             setListShown(true);
             setSearchResult(searchresult);
         } catch (IllegalStateException e) {

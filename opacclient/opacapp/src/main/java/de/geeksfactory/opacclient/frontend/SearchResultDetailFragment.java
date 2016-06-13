@@ -6,19 +6,19 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
-import android.graphics.Rect;
+import android.graphics.Color;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
+import android.support.design.widget.AppBarLayout;
 import android.support.v4.app.Fragment;
-import android.support.v4.view.ViewCompat;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.graphics.Palette;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.Toolbar;
-import android.text.util.Linkify;
 import android.util.Log;
-import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -26,27 +26,22 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
-import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
-import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
-import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.nineoldandroids.view.ViewHelper;
+import net.opacapp.multilinecollapsingtoolbar.CollapsingToolbarLayout;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 import de.geeksfactory.opacclient.OpacClient;
 import de.geeksfactory.opacclient.R;
@@ -62,13 +57,17 @@ import de.geeksfactory.opacclient.objects.Account;
 import de.geeksfactory.opacclient.objects.CoverHolder;
 import de.geeksfactory.opacclient.objects.Detail;
 import de.geeksfactory.opacclient.objects.DetailledItem;
+import de.geeksfactory.opacclient.objects.SearchResult;
 import de.geeksfactory.opacclient.storage.AccountDataSource;
 import de.geeksfactory.opacclient.storage.StarDataSource;
 import de.geeksfactory.opacclient.ui.AppCompatProgressDialog;
-import de.geeksfactory.opacclient.ui.ObservableScrollView;
 import de.geeksfactory.opacclient.ui.WhitenessUtils;
+import de.geeksfactory.opacclient.utils.BitmapUtils;
 import de.geeksfactory.opacclient.utils.CompatibilityUtils;
 import de.geeksfactory.opacclient.utils.ErrorReporter;
+import su.j2e.rvjoiner.JoinableAdapter;
+import su.j2e.rvjoiner.JoinableLayout;
+import su.j2e.rvjoiner.RvJoiner;
 
 /**
  * A fragment representing a single SearchResult detail screen. This fragment is either contained in
@@ -76,7 +75,7 @@ import de.geeksfactory.opacclient.utils.ErrorReporter;
  * SearchResultDetailActivity} on handsets.
  */
 public class SearchResultDetailFragment extends Fragment
-        implements Toolbar.OnMenuItemClickListener, ObservableScrollView.Callbacks {
+        implements Toolbar.OnMenuItemClickListener {
     /**
      * The fragment argument representing the item ID that this fragment represents.
      */
@@ -84,6 +83,8 @@ public class SearchResultDetailFragment extends Fragment
 
     public static final String ARG_ITEM_NR = "item_nr";
     public static final String ARG_ITEM_COVER_BITMAP = "item_cover_bitmap";
+    public static final String ARG_ITEM_MEDIATYPE = "item_mediatype";
+
     /**
      * A dummy implementation of the {@link Callbacks} interface that does nothing. Used only when
      * this fragment is not attached to an activity.
@@ -103,14 +104,12 @@ public class SearchResultDetailFragment extends Fragment
     protected Toolbar toolbar;
     protected ImageView ivCover;
     protected FrameLayout coverWrapper;
-    protected View coverBackground;
-    protected ObservableScrollView scrollView;
-    protected View gradientBottom, gradientTop, tint;
-    protected TextView tvCopies;
-    protected LinearLayout llDetails, llCopies;
+    protected View gradientBottom, gradientTop;
+    protected RecyclerView rvDetails;
     protected ProgressBar progressBar;
-    protected RelativeLayout detailsLayout;
     protected FrameLayout errorView;
+    protected CollapsingToolbarLayout collapsingToolbar;
+    protected AppBarLayout appBarLayout;
 
     /**
      * The detailled item that this fragment represents.
@@ -146,11 +145,7 @@ public class SearchResultDetailFragment extends Fragment
         progress = show;
 
         if (view != null) {
-            View content = detailsLayout;
-
-            if (scrollView != null) {
-                scrollView.setVisibility(View.VISIBLE);
-            }
+            View content = rvDetails;
 
             if (show) {
                 if (animate) {
@@ -196,12 +191,12 @@ public class SearchResultDetailFragment extends Fragment
 
         progressBar.startAnimation(AnimationUtils.loadAnimation(getActivity(),
                 android.R.anim.fade_out));
-        scrollView.startAnimation(AnimationUtils.loadAnimation(getActivity(),
+        rvDetails.startAnimation(AnimationUtils.loadAnimation(getActivity(),
                 android.R.anim.fade_out));
         connError.startAnimation(AnimationUtils.loadAnimation(getActivity(),
                 android.R.anim.fade_in));
         progressBar.setVisibility(View.GONE);
-        scrollView.setVisibility(View.GONE);
+        rvDetails.setVisibility(View.GONE);
         connError.setVisibility(View.VISIBLE);
     }
 
@@ -262,7 +257,6 @@ public class SearchResultDetailFragment extends Fragment
                 container, false);
         view = rootView;
         findViews();
-        toolbar.setVisibility(View.VISIBLE);
         setHasOptionsMenu(false);
 
         if (getActivity() instanceof SearchResultDetailActivity) {
@@ -285,8 +279,6 @@ public class SearchResultDetailFragment extends Fragment
         setRetainInstance(true);
         setProgress();
 
-        scrollView.addCallbacks(this);
-
         if (getArguments().containsKey(ARG_ITEM_COVER_BITMAP)) {
             Bitmap bitmap = getArguments().getParcelable(ARG_ITEM_COVER_BITMAP);
             ivCover.setImageBitmap(bitmap);
@@ -296,69 +288,53 @@ public class SearchResultDetailFragment extends Fragment
             showCoverView(false);
         }
 
-        //fixEllipsize(tvTitel);
-
         return rootView;
     }
 
     private void analyzeCover(Bitmap bitmap) {
-        Palette.from(bitmap).generate(new Palette.PaletteAsyncListener() {
-            @Override
-            public void onGenerated(Palette palette) {
-                Palette.Swatch swatch = palette.getDarkVibrantSwatch();
-                if (swatch != null) {
-                    coverBackground.setBackgroundColor(swatch.getRgb());
-                    tint.setBackgroundColor(swatch.getRgb());
+        try {
+            Palette.from(bitmap).generate(new Palette.PaletteAsyncListener() {
+                @Override
+                public void onGenerated(Palette palette) {
+                    Palette.Swatch swatch = palette.getDarkVibrantSwatch();
+                    if (swatch == null) swatch = palette.getDarkMutedSwatch();
+                    if (swatch == null) swatch = palette.getLightVibrantSwatch();
+                    if (swatch == null) swatch = palette.getLightMutedSwatch();
+                    if (swatch == null && palette.getSwatches().size() > 0) {
+                        swatch = palette.getSwatches().get(0);
+                    }
+                    if (swatch != null) {
+                        appBarLayout.setBackgroundColor(swatch.getRgb());
+                        collapsingToolbar.setContentScrimColor(swatch.getRgb());
+                        if (getActivity() != null &&
+                                getActivity() instanceof SearchResultDetailActivity &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                            // show darkened color in status bar
+                            float[] hsv = swatch.getHsl();
+                            hsv[2] *= 0.95f;
+                            getActivity().getWindow().setStatusBarColor(Color.HSVToColor(hsv));
+                        }
+                    }
                 }
-            }
-        });
-        analyzeWhitenessOfCoverAsync(bitmap);
-        image_analyzed = true;
+            });
+            analyzeWhitenessOfCoverAsync(bitmap);
+            image_analyzed = true;
+        } catch (IllegalArgumentException ignored) {
+            Log.w("analyzeCover", "Invalid bitmap received");
+        }
     }
 
     private void findViews() {
         toolbar = (Toolbar) view.findViewById(R.id.toolbar);
-        scrollView = (ObservableScrollView) view.findViewById(R.id.rootView);
         ivCover = (ImageView) view.findViewById(R.id.ivCover);
-        coverBackground = view.findViewById(R.id.coverBackground);
         coverWrapper = (FrameLayout) view.findViewById(R.id.coverWrapper);
         gradientBottom = view.findViewById(R.id.gradient_bottom);
         gradientTop = view.findViewById(R.id.gradient_top);
-        tint = view.findViewById(R.id.tint);
-        //tvTitel = (TextView) view.findViewById(R.id.tvTitle);
-        llDetails = (LinearLayout) view.findViewById(R.id.llDetails);
-        llCopies = (LinearLayout) view.findViewById(R.id.llCopies);
+        collapsingToolbar = (CollapsingToolbarLayout) view.findViewById(R.id.collapsingToolbar);
+        appBarLayout = (AppBarLayout) view.findViewById(R.id.appBarLayout);
+        rvDetails = (RecyclerView) view.findViewById(R.id.rvDetails);
         progressBar = (ProgressBar) view.findViewById(R.id.progress);
-        detailsLayout = (RelativeLayout) view.findViewById(R.id.detailsLayout);
         errorView = (FrameLayout) view.findViewById(R.id.error_view);
-        tvCopies = (TextView) view.findViewById(R.id.tvCopies);
-    }
-
-    /**
-     * Workaround because the built-in ellipsize function does not work for multiline TextViews This
-     * function is only prepared for one or two lines
-     *
-     * @param tv The TextView to fix
-     */
-    private void fixEllipsize(final TextView tv) {
-        tv.getViewTreeObserver()
-          .addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-
-              @Override
-              public void onGlobalLayout() {
-                  if (tv.getLineCount() > 2) {
-                      try {
-                          int lineEndIndex = tv.getLayout().getLineEnd(1);
-                          String text = tv.getText().subSequence(0, lineEndIndex - 3) + "...";
-                          tv.setText(text);
-                      } catch (StringIndexOutOfBoundsException e) {
-                          // Happens in strange cases where the second line is less than three
-                          // characters long
-                          e.printStackTrace();
-                      }
-                  }
-              }
-          });
     }
 
     /**
@@ -382,200 +358,84 @@ public class SearchResultDetailFragment extends Fragment
         } catch (Exception e) {
             ErrorReporter.handleException(e);
         }
-        toolbar.setTitle(getItem().getTitle());
-        llDetails.removeAllViews();
-        for (Detail detail : item.getDetails()) {
-            View v = getLayoutInflater(null)
-                    .inflate(R.layout.listitem_detail, null);
-            ((TextView) v.findViewById(R.id.tvDesc)).setText(detail.getDesc());
-            ((TextView) v.findViewById(R.id.tvContent)).setText(detail
-                    .getContent());
-            Linkify.addLinks((TextView) v.findViewById(R.id.tvContent),
-                    Linkify.WEB_URLS);
-            llDetails.addView(v);
+        collapsingToolbar.setTitle(getItem().getTitle());
+
+        rvDetails.setLayoutManager(new LinearLayoutManager(getActivity()));
+        RvJoiner joiner = new RvJoiner();
+
+        addSubhead(joiner, R.string.details_head);
+        joiner.add(new JoinableAdapter(new DetailsAdapter(item.getDetails(), getActivity())));
+
+        if (item.getCopies().size() != 0) {
+            addSubhead(joiner, R.string.copies_head);
+            joiner.add(new JoinableAdapter(new CopiesAdapter(item.getCopies(), getActivity())));
         }
 
-        llCopies.removeAllViews();
         if (item.getVolumesearch() != null) {
-            tvCopies.setText(R.string.volumes);
-            Button btnVolume = new Button(getActivity());
-            btnVolume.setText(R.string.volumesearch);
-            btnVolume.setOnClickListener(new OnClickListener() {
+            addSubhead(joiner, R.string.volumes);
+            joiner.add(new JoinableLayout(
+                    R.layout.listitem_details_volumesearch, new JoinableLayout.Callback() {
                 @Override
-                public void onClick(View v) {
-                    app.startVolumeSearch(getActivity(), getItem().getVolumesearch());
+                public void onInflateComplete(View view, ViewGroup parent) {
+                    view.setOnClickListener(new OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            app.startVolumeSearch(getActivity(), getItem().getVolumesearch());
+                        }
+                    });
                 }
-            });
-            llCopies.addView(btnVolume);
-
+            }));
         } else if (item.getVolumes().size() > 0) {
-            tvCopies.setText(R.string.volumes);
-
-            for (final Map<String, String> band : item.getVolumes()) {
-                View v = getLayoutInflater(null).inflate(R.layout.listitem_volume,
-                        null);
-                ((TextView) v.findViewById(R.id.tvTitel)).setText(band
-                        .get(DetailledItem.KEY_CHILD_TITLE));
-
-                v.findViewById(R.id.llItem).setOnClickListener(
-                        new OnClickListener() {
-                            @Override
-                            public void onClick(View v) {
-                                Intent intent = new Intent(getActivity(),
-                                        SearchResultDetailActivity.class);
-                                intent.putExtra(ARG_ITEM_ID,
-                                        band.get(DetailledItem.KEY_CHILD_ID));
-                                intent.putExtra("from_collection", true);
-                                startActivity(intent);
-                            }
-                        });
-                llCopies.addView(v);
-            }
-        } else {
-            if (item.getCopies().size() == 0) {
-                tvCopies.setVisibility(View.GONE);
-            } else {
-                for (Map<String, String> copy : item.getCopies()) {
-                    View v = getLayoutInflater(null).inflate(
-                            R.layout.listitem_copy, llCopies, false);
-
-                    if (v.findViewById(R.id.tvBranch) != null) {
-                        if (containsAndNotEmpty(copy, DetailledItem.KEY_COPY_BRANCH)) {
-                            ((TextView) v.findViewById(R.id.tvBranch))
-                                    .setText(copy
-                                            .get(DetailledItem.KEY_COPY_BRANCH));
-                            v.findViewById(R.id.tvBranch).setVisibility(View.VISIBLE);
-                        } else {
-                            v.findViewById(R.id.tvBranch).setVisibility(View.GONE);
-                        }
-                    }
-                    if (v.findViewById(R.id.tvDepartment) != null) {
-                        if (containsAndNotEmpty(copy, DetailledItem.KEY_COPY_DEPARTMENT)) {
-                            ((TextView) v.findViewById(R.id.tvDepartment))
-                                    .setText(copy
-                                            .get(DetailledItem.KEY_COPY_DEPARTMENT));
-                            v.findViewById(R.id.tvDepartment).setVisibility(View.VISIBLE);
-                        } else {
-                            v.findViewById(R.id.tvDepartment).setVisibility(View.GONE);
-                        }
-                    }
-                    if (v.findViewById(R.id.tvLocation) != null) {
-                        if (containsAndNotEmpty(copy, DetailledItem.KEY_COPY_LOCATION)) {
-                            ((TextView) v.findViewById(R.id.tvLocation))
-                                    .setText(copy
-                                            .get(DetailledItem.KEY_COPY_LOCATION));
-                            v.findViewById(R.id.tvLocation).setVisibility(View.VISIBLE);
-                        } else {
-                            v.findViewById(R.id.tvLocation).setVisibility(View.GONE);
-                        }
-                    }
-                    if (v.findViewById(R.id.tvShelfmark) != null) {
-                        if (containsAndNotEmpty(copy, DetailledItem.KEY_COPY_SHELFMARK)) {
-                            ((TextView) v.findViewById(R.id.tvShelfmark))
-                                    .setText(copy
-                                            .get(DetailledItem.KEY_COPY_SHELFMARK));
-                            v.findViewById(R.id.tvShelfmark).setVisibility(View.VISIBLE);
-                        } else {
-                            v.findViewById(R.id.tvShelfmark).setVisibility(View.GONE);
-                        }
-                    }
-                    if (v.findViewById(R.id.tvStatus) != null) {
-                        if (containsAndNotEmpty(copy, DetailledItem.KEY_COPY_STATUS)) {
-                            ((TextView) v.findViewById(R.id.tvStatus))
-                                    .setText(copy
-                                            .get(DetailledItem.KEY_COPY_STATUS));
-                            v.findViewById(R.id.tvStatus).setVisibility(View.VISIBLE);
-                        } else {
-                            v.findViewById(R.id.tvStatus).setVisibility(View.GONE);
-                        }
-                    }
-
-                    if (v.findViewById(R.id.tvReservations) != null) {
-                        if (containsAndNotEmpty(copy, DetailledItem.KEY_COPY_RESERVATIONS)) {
-                            ((TextView) v.findViewById(R.id.tvReservations))
-                                    .setText(copy.get(DetailledItem.KEY_COPY_RESERVATIONS));
-                            v.findViewById(R.id.tvReservations).setVisibility(View.VISIBLE);
-                        } else {
-                            v.findViewById(R.id.tvReservations).setVisibility(View.GONE);
-                        }
-                    }
-                    if (v.findViewById(R.id.tvReturndate) != null) {
-                        if (containsAndNotEmpty(copy, DetailledItem.KEY_COPY_RETURN)) {
-                            ((TextView) v.findViewById(R.id.tvReturndate))
-                                    .setText(copy.get(DetailledItem.KEY_COPY_RETURN));
-                            v.findViewById(R.id.tvReturndate).setVisibility(View.VISIBLE);
-                        } else {
-                            v.findViewById(R.id.tvReturndate).setVisibility(View.GONE);
-                        }
-                    }
-
-                    llCopies.addView(v);
-                }
-            }
+            addSubhead(joiner, R.string.volumes);
+            joiner.add(new JoinableAdapter(new VolumesAdapter(item.getVolumes(), getActivity())));
         }
+
+        rvDetails.setAdapter(joiner.getAdapter());
 
         if (id == null || id.equals("")) {
             id = getItem().getId();
         }
 
-        setProgress(false, true);
-
         refreshMenu(toolbar.getMenu());
-        toolbar.getViewTreeObserver()
-               .addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-                   @Override
-                   public void onGlobalLayout() {
-                       toolbar.getViewTreeObserver().removeGlobalOnLayoutListener(this);
-                       fixTitle();
-                   }
-               });
-        toolbar.requestLayout();
+
+        setProgress(false, true);
+    }
+
+    private void addSubhead(RvJoiner joiner, final int text) {
+        joiner.add(new JoinableLayout(
+                R.layout.listitem_details_subhead, new JoinableLayout.Callback() {
+            @Override
+            public void onInflateComplete(View view, ViewGroup parent) {
+                ((TextView) view).setText(text);
+            }
+        }));
     }
 
     private void displayCover() {
         if (getItem().getCoverBitmap() != null) {
             coverWrapper.setVisibility(View.VISIBLE);
-            ivCover.setImageBitmap(getItem().getCoverBitmap());
+            Bitmap bm = BitmapUtils.bitmapFromBytes(getItem().getCoverBitmap());
+            ivCover.setImageBitmap(bm);
             if (!image_analyzed) {
-                analyzeCover(getItem().getCoverBitmap());
+                analyzeCover(bm);
             }
             showCoverView(true);
         } else if (getArguments().containsKey(ARG_ITEM_COVER_BITMAP)) {
             showCoverView(true);
         } else {
             showCoverView(false);
-            toolbar.setTitle(getItem().getTitle());
+            collapsingToolbar.setTitle(getItem().getTitle());
         }
-    }
-
-    private boolean containsAndNotEmpty(Map<String, String> map, String key) {
-        return map.containsKey(key) && !map.get(key).equals("");
     }
 
     private void showCoverView(boolean b) {
-        coverWrapper.setVisibility(b ? View.VISIBLE : View.GONE);
-        gradientBottom.setVisibility(b ? View.VISIBLE : View.GONE);
-        gradientTop.setVisibility(b ? View.VISIBLE : View.GONE);
-        RelativeLayout.LayoutParams params =
-                new RelativeLayout.LayoutParams(RelativeLayout.LayoutParams.MATCH_PARENT,
-                        RelativeLayout.LayoutParams.WRAP_CONTENT);
-        if (b) {
-            toolbar.setBackgroundResource(R.color.transparent);
-            ViewCompat.setElevation(toolbar, 0);
-            llDetails.setPadding(
-                    llDetails.getPaddingLeft(),
-                    0,
-                    llDetails.getPaddingRight(),
-                    llDetails.getPaddingBottom()
-            );
-            params.addRule(RelativeLayout.BELOW, R.id.coverWrapper);
-        } else {
-            toolbar.setBackgroundResource(getToolbarBackgroundColor());
-            ViewCompat.setElevation(toolbar, TypedValue.applyDimension(TypedValue
-                    .COMPLEX_UNIT_DIP, 4f, getResources().getDisplayMetrics()));
-            params.addRule(RelativeLayout.BELOW, R.id.toolbar);
+        if (getActivity() == null) {
+            return;
         }
-        detailsLayout.setLayoutParams(params);
+        coverWrapper.setVisibility(b ? View.VISIBLE : View.GONE);
+        if (!b) {
+            appBarLayout.setBackgroundResource(getToolbarBackgroundColor());
+        }
     }
 
     private int getToolbarBackgroundColor() {
@@ -587,138 +447,6 @@ public class SearchResultDetailFragment extends Fragment
             }
         } else {
             return R.color.primary_red;
-        }
-    }
-
-    private void fixTitle() {
-        // Toolbar is used for displaying title
-        toolbar.getViewTreeObserver()
-               .addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-                   @Override
-                   public void onGlobalLayout() {
-                       // We need to wait for toolbar to refresh to get correct calculations
-                       toolbar.getViewTreeObserver().removeGlobalOnLayoutListener(
-                               this);
-                       if (toolbar.isTitleTruncated()) {
-                           toolbar.getLayoutParams().height = (int) TypedValue.applyDimension(
-                                   TypedValue.COMPLEX_UNIT_SP, 84f,
-                                   getResources().getDisplayMetrics());
-                           TextView titleTextView = findTitleTextView(toolbar);
-                           if (titleTextView != null) {
-                               titleTextView.setSingleLine(false);
-                               fixEllipsize(titleTextView);
-                           }
-                           toolbar.getParent().requestLayout();
-                       }
-                   }
-               });
-        onScrollChanged(0, 0);
-
-        ((ViewGroup) toolbar.getParent()).getViewTreeObserver().addOnGlobalLayoutListener(
-                new ViewTreeObserver.OnGlobalLayoutListener() {
-                    @Override
-                    public void onGlobalLayout() {
-                        onScrollChanged(0, 0);
-            }
-                });
-    }
-
-    /**
-     * Hacky way to find the first {@link android.widget.TextView} inside a {@link android
-     * .support.v7.widget.Toolbar}, wnich is typically the title. Will return null if none is found
-     *
-     * @param toolbar a Toolbar
-     * @return the first TextView inside this toolbar, or null if none is found
-     */
-    private TextView findTitleTextView(Toolbar toolbar) {
-        for (int i = 0; i < toolbar.getChildCount(); i++) {
-            View view = toolbar.getChildAt(i);
-            if (view instanceof TextView) {
-                return (TextView) view;
-            }
-        }
-        return null;
-    }
-
-    @Override
-    public void onScrollChanged(int deltaX, int deltaY) {
-        if (getItem() == null) {
-            return;
-        }
-        int scrollY = scrollView.getScrollY();
-        boolean hasCover = getItem().getCoverBitmap() != null
-                || getArguments().containsKey(ARG_ITEM_COVER_BITMAP);
-        if (hasCover) {
-            // Parallax effect
-            ViewHelper.setTranslationY(coverWrapper, scrollY * 0.5f);
-            ViewHelper.setTranslationY(gradientBottom, scrollY * 0.5f);
-            ViewHelper.setTranslationY(gradientTop, scrollY * 0.5f);
-        }
-        // Toolbar stays at the top
-        ViewHelper.setTranslationY(toolbar, scrollY);
-
-        TextView toolbarTitle = findTitleTextView(toolbar);
-        if (hasCover) {
-            float minHeight = toolbar.getHeight();
-            float progress =
-                    Math.min(((float) scrollY) / (coverWrapper.getHeight() - minHeight), 1);
-            float scale = 36f / 20f * (1 - progress) + progress;
-            if (toolbarTitle != null) {
-                ViewHelper.setPivotX(toolbarTitle, 0);
-                ViewHelper.setPivotY(toolbarTitle, toolbarTitle.getHeight());
-                ViewHelper.setScaleX(toolbarTitle, scale);
-                ViewHelper.setScaleY(toolbarTitle, scale);
-                if (back_button_visible) {
-                    ViewHelper.setTranslationX(toolbarTitle, (progress - 1) * TypedValue
-                            .applyDimension(TypedValue.COMPLEX_UNIT_DIP, 50f, getResources()
-                                    .getDisplayMetrics()));
-                }
-            }
-
-            ViewHelper.setAlpha(tint, progress);
-
-            if (progress == 1) {
-                if (toolbarTitle != null) ViewHelper.setTranslationY(toolbarTitle, 0);
-                if (!coverBackground.getBackground().equals(toolbar.getBackground())) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-                        toolbar.setBackground(coverBackground.getBackground());
-                    } else {
-                        //noinspection deprecation
-                        toolbar.setBackgroundDrawable(coverBackground.getBackground());
-                    }
-                    ViewCompat.setElevation(toolbar, TypedValue.applyDimension(TypedValue
-                            .COMPLEX_UNIT_DIP, 4f, getResources().getDisplayMetrics()));
-                }
-            } else {
-                if (toolbarTitle != null) {
-                    ViewHelper
-                            .setTranslationY(toolbarTitle,
-                                    -scrollY + coverWrapper.getHeight() - minHeight);
-                }
-                if (coverBackground.getBackground().equals(toolbar.getBackground())) {
-                    toolbar.setBackgroundResource(R.color.transparent);
-                    ViewCompat.setElevation(toolbar, 0);
-                }
-            }
-        }
-
-        // Card animations
-        if (cardAnimations == null) {
-            cardAnimations = new Boolean[llCopies.getChildCount()];
-            Arrays.fill(cardAnimations, false);
-        }
-        for (int i = 0; i < llCopies.getChildCount(); i++) {
-            if (!cardAnimations[i]) {
-                View card = llCopies.getChildAt(i);
-                Rect scrollBounds = new Rect();
-                scrollView.getHitRect(scrollBounds);
-                if (card.getLocalVisibleRect(scrollBounds)) {
-                    // card is visible
-                    cardAnimations[i] = true;
-                    card.startAnimation(AnimationUtils.loadAnimation(getActivity(),
-                            R.anim.card_appear));
-                }
-            }
         }
     }
 
@@ -785,8 +513,9 @@ public class SearchResultDetailFragment extends Fragment
     @Override
     public void onDestroy() {
         super.onDestroy();
-        OpacActivity.unbindDrawables(view.findViewById(R.id.rootView));
-        System.gc();
+        // TODO: what was this?
+        /*OpacActivity.unbindDrawables(view.findViewById(R.id.rootView));
+        System.gc();*/
     }
 
     @Override
@@ -822,15 +551,19 @@ public class SearchResultDetailFragment extends Fragment
 
         String bib = app.getLibrary().getIdent();
         StarDataSource data = new StarDataSource(getActivity());
-        if ((id == null || id.equals("")) && item != null) {
+        String _id = id;
+        if (item != null) {
+            _id = item.getId();
+        }
+        if ((_id == null || _id.equals("")) && item != null) {
             if (data.isStarredTitle(bib, item.getTitle())) {
                 menu.findItem(R.id.action_star).setIcon(
-                        R.drawable.ic_action_star_1);
+                        R.drawable.ic_star_1_white_24dp);
             }
         } else {
-            if (data.isStarred(bib, id)) {
+            if (data.isStarred(bib, _id)) {
                 menu.findItem(R.id.action_star).setIcon(
-                        R.drawable.ic_action_star_1);
+                        R.drawable.ic_star_1_white_24dp);
             }
         }
     }
@@ -927,7 +660,7 @@ public class SearchResultDetailFragment extends Fragment
                             } catch (UnsupportedEncodingException e) {
                             }
 
-                            String text = t + "\n\n";
+                            String text = title + "\n\n";
 
                             for (Detail detail : getItem().getDetails()) {
                                 String colon = "";
@@ -964,28 +697,34 @@ public class SearchResultDetailFragment extends Fragment
             } else if (getItem().getId() == null
                     || getItem().getId().equals("")) {
                 final String title = getItem().getTitle();
-                if (star.isStarredTitle(bib, title)) {
-                    star.remove(star.getItemByTitle(bib, title));
-                    item.setIcon(R.drawable.ic_action_star_0);
-                } else {
-                    star.star(null, title, bib);
+                if (title == null || title.equals("")) {
                     Toast toast = Toast.makeText(getActivity(),
-                            getString(R.string.starred), Toast.LENGTH_SHORT);
+                            getString(R.string.star_unsupported), Toast.LENGTH_LONG);
                     toast.show();
-                    item.setIcon(R.drawable.ic_action_star_1);
+                } else {
+                    if (star.isStarredTitle(bib, title)) {
+                        star.remove(star.getItemByTitle(bib, title));
+                        item.setIcon(R.drawable.ic_star_0_white_24dp);
+                    } else {
+                        star.star(null, title, bib, getItem().getMediaType());
+                        Toast toast = Toast.makeText(getActivity(),
+                                getString(R.string.starred), Toast.LENGTH_SHORT);
+                        toast.show();
+                        item.setIcon(R.drawable.ic_star_1_white_24dp);
+                    }
                 }
             } else {
                 final String title = getItem().getTitle();
                 final String id = getItem().getId();
                 if (star.isStarred(bib, id)) {
                     star.remove(star.getItem(bib, id));
-                    item.setIcon(R.drawable.ic_action_star_0);
+                    item.setIcon(R.drawable.ic_star_0_white_24dp);
                 } else {
-                    star.star(id, title, bib);
+                    star.star(id, title, bib, getItem().getMediaType());
                     Toast toast = Toast.makeText(getActivity(),
                             getString(R.string.starred), Toast.LENGTH_SHORT);
                     toast.show();
-                    item.setIcon(R.drawable.ic_action_star_1);
+                    item.setIcon(R.drawable.ic_star_1_white_24dp);
                 }
             }
             return true;
@@ -1065,15 +804,12 @@ public class SearchResultDetailFragment extends Fragment
         }
 
         AccountDataSource data = new AccountDataSource(getActivity());
-        data.open();
         final List<Account> accounts = data.getAccountsWithPassword(app
                 .getLibrary().getIdent());
-        data.close();
         if (accounts.size() == 0) {
             dialog_no_credentials();
         } else if (accounts.size() > 1
-                && !getActivity().getIntent().getBooleanExtra("reservation",
-                false)
+                && !getActivity().getIntent().getBooleanExtra("reservation", false)
                 && (app.getApi().getSupportFlags() & OpacApi.SUPPORT_FLAG_CHANGE_ACCOUNT) != 0
                 && !(SearchResultDetailFragment.this.id == null
                 || SearchResultDetailFragment.this.id.equals("null") ||
@@ -1139,15 +875,49 @@ public class SearchResultDetailFragment extends Fragment
     }
 
     public void reservationDo() {
+        final SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(getActivity());
+        if (sp.getBoolean("reservation_fee_warning_ignore", false) ||
+                (app.getApi().getSupportFlags() & OpacApi.SUPPORT_FLAG_WARN_RESERVATION_FEES) > 0) {
+            reservationPerform();
+        } else {
+            AlertDialog.Builder builder = new AlertDialog.Builder(
+                    getActivity());
+            View content = getLayoutInflater(null).inflate(R.layout.dialog_reservation_fees, null);
+            final CheckBox check = (CheckBox) content.findViewById(R.id.check_box1);
+            builder.setView(content)
+                   .setCancelable(false)
+                   .setNegativeButton(R.string.cancel,
+                           new DialogInterface.OnClickListener() {
+                               @Override
+                               public void onClick(
+                                       DialogInterface dialog, int id) {
+                                   dialog.cancel();
+                               }
+                           })
+                   .setPositiveButton(R.string.reservation_fee_continue,
+                           new DialogInterface.OnClickListener() {
+                               @Override
+                               public void onClick(
+                                       DialogInterface dialog, int id) {
+                                   if (check.isChecked()) {
+                                       sp.edit().putBoolean("reservation_fee_warning_ignore", true).apply();
+                                   }
+                                   reservationPerform();
+                               }
+                           });
+            AlertDialog alert = builder.create();
+            alert.show();
+        }
+    }
+
+    public void reservationPerform() {
         MultiStepResultHelper<DetailledItem> msrhReservation = new MultiStepResultHelper<>(
                 getActivity(), item, R.string.doing_res);
         msrhReservation.setCallback(new Callback<DetailledItem>() {
             @Override
             public void onSuccess(MultiStepResult result) {
                 AccountDataSource adata = new AccountDataSource(getActivity());
-                adata.open();
                 adata.invalidateCachedAccountData(app.getAccount());
-                adata.close();
                 if (result.getMessage() != null) {
                     AlertDialog.Builder builder = new AlertDialog.Builder(
                             getActivity());
@@ -1167,10 +937,8 @@ public class SearchResultDetailFragment extends Fragment
                                        public void onClick(
                                                DialogInterface dialog, int id) {
                                            Intent intent = new Intent(
-                                                   getActivity(), app
-                                                   .getMainActivity());
-                                           intent.putExtra("fragment",
-                                                   "account");
+                                                   getActivity(), app.getMainActivity());
+                                           intent.putExtra(MainActivity.EXTRA_FRAGMENT, "account");
                                            getActivity().startActivity(intent);
                                            getActivity().finish();
                                        }
@@ -1180,7 +948,7 @@ public class SearchResultDetailFragment extends Fragment
                 } else {
                     Intent intent = new Intent(getActivity(), app
                             .getMainActivity());
-                    intent.putExtra("fragment", "account");
+                    intent.putExtra(MainActivity.EXTRA_FRAGMENT, "account");
                     getActivity().startActivity(intent);
                     getActivity().finish();
                 }
@@ -1210,10 +978,8 @@ public class SearchResultDetailFragment extends Fragment
 
     protected void bookingStart() {
         AccountDataSource data = new AccountDataSource(getActivity());
-        data.open();
         final List<Account> accounts = data.getAccountsWithPassword(app
                 .getLibrary().getIdent());
-        data.close();
         if (accounts.size() == 0) {
             dialog_no_credentials();
         } else if (accounts.size() > 1) {
@@ -1255,7 +1021,7 @@ public class SearchResultDetailFragment extends Fragment
 
     public void bookingDo() {
         MultiStepResultHelper<DetailledItem> msrhBooking = new MultiStepResultHelper<>(
-                getActivity(), item, R.string.doing_res);
+                getActivity(), item, R.string.doing_booking);
         msrhBooking.setCallback(new Callback<DetailledItem>() {
             @Override
             public void onSuccess(MultiStepResult result) {
@@ -1263,11 +1029,9 @@ public class SearchResultDetailFragment extends Fragment
                     return;
                 }
                 AccountDataSource adata = new AccountDataSource(getActivity());
-                adata.open();
                 adata.invalidateCachedAccountData(app.getAccount());
-                adata.close();
                 Intent intent = new Intent(getActivity(), app.getMainActivity());
-                intent.putExtra("fragment", "account");
+                intent.putExtra(MainActivity.EXTRA_FRAGMENT, "account");
                 getActivity().startActivity(intent);
                 getActivity().finish();
             }
@@ -1310,8 +1074,10 @@ public class SearchResultDetailFragment extends Fragment
 
     public class LoadCoverTask extends CoverDownloadTask {
 
-        public LoadCoverTask(CoverHolder item) {
+        public LoadCoverTask(CoverHolder item, int width, int height) {
             super(getActivity(), item);
+            this.width = width;
+            this.height = height;
         }
 
         protected void onPostExecute(CoverHolder item) {
@@ -1351,6 +1117,10 @@ public class SearchResultDetailFragment extends Fragment
                 } else {
                     res = app.getApi().getResult(nr);
                 }
+                if (res.getMediaType() == null && getArguments().containsKey(ARG_ITEM_MEDIATYPE)) {
+                    res.setMediaType(SearchResult.MediaType
+                            .valueOf(getArguments().getString(ARG_ITEM_MEDIATYPE)));
+                }
                 success = true;
                 return res;
             } catch (Exception e) {
@@ -1375,7 +1145,7 @@ public class SearchResultDetailFragment extends Fragment
             item = result;
 
             if (item.getCover() != null && item.getCoverBitmap() == null) {
-                new LoadCoverTask(item).execute();
+                new LoadCoverTask(item, collapsingToolbar.getWidth(), collapsingToolbar.getHeight()).execute();
             } else {
                 displayCover();
             }

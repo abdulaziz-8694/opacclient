@@ -20,19 +20,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import de.geeksfactory.opacclient.apis.Adis;
-import de.geeksfactory.opacclient.apis.BiBer1992;
-import de.geeksfactory.opacclient.apis.Bibliotheca;
-import de.geeksfactory.opacclient.apis.IOpac;
+import de.geeksfactory.opacclient.OpacApiFactory;
 import de.geeksfactory.opacclient.apis.OpacApi;
 import de.geeksfactory.opacclient.apis.OpacApi.OpacErrorException;
-import de.geeksfactory.opacclient.apis.Pica;
-import de.geeksfactory.opacclient.apis.SISIS;
-import de.geeksfactory.opacclient.apis.SRU;
-import de.geeksfactory.opacclient.apis.TouchPoint;
-import de.geeksfactory.opacclient.apis.WebOpacNet;
-import de.geeksfactory.opacclient.apis.WinBiap;
-import de.geeksfactory.opacclient.apis.Zones22;
 import de.geeksfactory.opacclient.objects.Account;
 import de.geeksfactory.opacclient.objects.DetailledItem;
 import de.geeksfactory.opacclient.objects.Library;
@@ -50,10 +40,10 @@ import static org.junit.Assert.assertTrue;
 @RunWith(Parallelized.class)
 public class LibraryApiTestCases {
 
+    private static final String FOLDER = "opacapp/src/main";
     private Library library;
     private OpacApi api;
     private List<SearchField> fields;
-    private static final String FOLDER = "opacapp/src/main";
 
     public LibraryApiTestCases(String library) throws JSONException,
             IOException {
@@ -65,18 +55,30 @@ public class LibraryApiTestCases {
 
     @Parameters(name = "{0}")
     public static Collection<String[]> libraries() {
+        return getLibraries(FOLDER);
+    }
+
+    public static Collection<String[]> getLibraries(String folder) {
         List<String[]> libraries = new ArrayList<>();
-        for (String file : new File(FOLDER + "/assets/bibs/").list()) {
+        for (String file : new File(folder + "/assets/bibs/").list()) {
+            if (file.equals("Test.json")) {
+                continue;
+            }
             libraries.add(new String[]{file.replace(".json", "")});
         }
         return libraries;
+    }
+
+    public static String readFile(String path, Charset encoding) throws IOException {
+        byte[] encoded = Files.readAllBytes(Paths.get(path));
+        return encoding.decode(ByteBuffer.wrap(encoded)).toString();
     }
 
     @Before
     public void setUp() throws IOException,
             OpacErrorException, JSONException {
         Security.addProvider(new BouncyCastleProvider());
-        api = getApi(library);
+        api = OpacApiFactory.create(library, "OpacApp/Test");
         fields = api.getSearchFields();
         JavaMeaningDetector detector = new JavaMeaningDetector(library);
         for (int i = 0; i < fields.size(); i++) {
@@ -106,15 +108,29 @@ public class LibraryApiTestCases {
     @Test
     public void testSearchScrolling() throws
             IOException, OpacErrorException, JSONException {
+        try {
+            scrollTestHelper("harry");
+        } catch (OpacErrorException e) {
+            if (e.getMessage().contains("viele Treffer")) {
+                scrollTestHelper("harry potter");
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    public void scrollTestHelper(String q) throws OpacErrorException, IOException,
+            JSONException {
         List<SearchQuery> query = new ArrayList<>();
         SearchField field = findFreeSearchOrTitle(fields);
         if (field == null) {
             throw new OpacErrorException( // TODO: prevent this
                     "There is no free or title search field");
         }
-        query.add(new SearchQuery(field, "harry"));
+        query.add(new SearchQuery(field, q));
         SearchRequestResult res = api.search(query);
-        assertTrue(res.getResults().size() <= res.getTotal_result_count());
+        assertTrue(res.getTotal_result_count() == -1 ||
+                res.getResults().size() <= res.getTotal_result_count());
         assertTrue(res.getResults().size() > 0);
 
         SearchResult third;
@@ -147,7 +163,7 @@ public class LibraryApiTestCases {
 
     /**
      * Create an account with credentials that probably nobody has and try to login. This should
-     * normally give an OpacErrorException.
+     * normally give an {@link OpacErrorException}.
      */
     @Test
     public void testWrongLogin() throws IOException, JSONException {
@@ -196,11 +212,6 @@ public class LibraryApiTestCases {
         }
     }
 
-    static String readFile(String path, Charset encoding) throws IOException {
-        byte[] encoded = Files.readAllBytes(Paths.get(path));
-        return encoding.decode(ByteBuffer.wrap(encoded)).toString();
-    }
-
     /**
      * @param fields List of SearchFields
      * @return The first free search field from the list. If there is none, the title search fields
@@ -220,42 +231,5 @@ public class LibraryApiTestCases {
             }
         }
         return null;
-    }
-
-    public static OpacApi getApi(Library library) {
-        OpacApi api;
-        if (library.getApi().equals("bond26")
-                || library.getApi().equals("bibliotheca"))
-        // Backwardscompatibility
-        {
-            api = new Bibliotheca();
-        } else if (library.getApi().equals("oclc2011")
-                || library.getApi().equals("sisis"))
-        // Backwards compatibility
-        {
-            api = new SISIS();
-        } else if (library.getApi().equals("zones22")) {
-            api = new Zones22();
-        } else if (library.getApi().equals("biber1992")) {
-            api = new BiBer1992();
-        } else if (library.getApi().equals("pica")) {
-            api = new Pica();
-        } else if (library.getApi().equals("iopac")) {
-            api = new IOpac();
-        } else if (library.getApi().equals("adis")) {
-            api = new Adis();
-        } else if (library.getApi().equals("sru")) {
-            api = new SRU();
-        } else if (library.getApi().equals("winbiap")) {
-            api = new WinBiap();
-        } else if (library.getApi().equals("webopac.net")) {
-            api = new WebOpacNet();
-        } else if (library.getApi().equals("touchpoint")) {
-            api = new TouchPoint();
-        } else {
-            api = null;
-        }
-        if (api != null) api.init(library);
-        return api;
     }
 }

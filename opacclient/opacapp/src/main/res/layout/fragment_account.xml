@@ -27,7 +27,8 @@
         <ScrollView
             android:id="@+id/svAccount"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content">
+            android:layout_height="wrap_content"
+            android:transitionGroup="true">
 
             <RelativeLayout
                 android:id="@+id/rlAccView"
@@ -89,11 +90,16 @@
                         android:id="@+id/tvPendingFees"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_alignParentRight="true"
+                        android:layout_alignEnd="@+id/tvAccUser"
+                        android:layout_alignRight="@+id/tvAccUser"
                         android:layout_below="@id/tvAccUser"
                         android:layout_marginBottom="4dp"
+                        android:layout_toEndOf="@id/tvPendingFeesLabel"
+                        android:layout_toRightOf="@id/tvPendingFeesLabel"
+                        android:ellipsize="end"
                         android:textColor="@color/account_head_fg"
-                        android:textIsSelectable="true"/>
+                        android:textIsSelectable="true"
+                        android:gravity="right"/>
 
                     <TextView
                         android:id="@+id/tvValidUntilLabel"
@@ -112,8 +118,13 @@
                         android:layout_alignParentRight="true"
                         android:layout_below="@id/tvPendingFees"
                         android:layout_marginBottom="4dp"
+                        android:layout_toEndOf="@id/tvValidUntilLabel"
+                        android:layout_toRightOf="@id/tvValidUntilLabel"
+                        android:ellipsize="end"
                         android:textColor="@color/account_head_fg"
-                        android:textIsSelectable="true"/>
+                        android:textIsSelectable="true"
+                        android:singleLine="true"
+                        android:gravity="right"/>
                 </RelativeLayout>
 
                 <TextView
@@ -230,7 +241,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:padding="10dp"
-            android:text="@string/account_unsupported"/>
+            android:text="@string/account_unsupported_api"/>
 
         <Button
             android:id="@+id/btSend"

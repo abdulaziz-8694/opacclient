@@ -47,6 +47,7 @@ public class Library implements Comparable<Library> {
     private double[] geo;
     private float geo_distance;
     private boolean account_supported;
+    private boolean nfcSupported;
 
     /**
      * Create a Library object based on a <code>JSONObject</code>.
@@ -68,6 +69,7 @@ public class Library implements Comparable<Library> {
         lib.setState(input.getString("state"));
         lib.setData(input.getJSONObject("data"));
         lib.setAccountSupported(input.getBoolean("account_supported"));
+        lib.setNfcSupported(input.optBoolean("nfc_supported", false));
 
         lib.setInformation(input.getString("information"));
         if (lib.getInformation() == null && lib.getData().has("information")) {
@@ -299,6 +301,22 @@ public class Library implements Comparable<Library> {
     }
 
     /**
+     * Get if this library is known to have NFC tags inside their books which work with the app's
+     * NFC search feature. Defaults to false if not set.
+     */
+    public boolean isNfcSupported() {
+        return nfcSupported;
+    }
+
+    /**
+     * Set if this library is known to have NFC tags inside their books which work with the app's
+     * NFC search feature. Defaults to false if not set.
+     */
+    public void setNfcSupported(boolean nfcSupported) {
+        this.nfcSupported = nfcSupported;
+    }
+
+    /**
      * @return Geo distance - only for temporary use.
      */
     public float getGeo_distance() {
@@ -322,6 +340,9 @@ public class Library implements Comparable<Library> {
             g = deCollator.compare(state, arg0.getState());
             if (g == 0) {
                 g = deCollator.compare(city, arg0.getCity());
+                if (g == 0) {
+                    g = deCollator.compare(title, arg0.getTitle());
+                }
             }
         }
         return g;

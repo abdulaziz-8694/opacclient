@@ -6,7 +6,9 @@
                                     horizontalSpacing="0dip"
                                     verticalSpacing="0dip"
                                     android:orientation="horizontal"
-                                    android:padding="0dp">
+                                    android:padding="0dp"
+                                    android:layout_marginLeft="@dimen/key_line"
+                                    android:layout_marginRight="@dimen/key_line">
 
     <TextView
         android:id="@+id/tvDesc"
@@ -21,6 +23,7 @@
         android:textColor="@color/detail_desc"
         tools:ignore="RtlSymmetry"/>
 
+    <!-- TODO: Text in here should be selectable, but it seems to break scrolling in SearchResultDetailFragment -->
     <TextView
         android:id="@+id/tvContent"
         android:layout_width="wrap_content"
@@ -29,7 +32,6 @@
         android:paddingBottom="4dip"
         android:paddingLeft="8dp"
         android:textAppearance="?android:attr/textAppearanceSmall"
-        android:textIsSelectable="true"
         tools:ignore="RtlSymmetry"/>
 
 </org.apmem.tools.layouts.FlowLayout>

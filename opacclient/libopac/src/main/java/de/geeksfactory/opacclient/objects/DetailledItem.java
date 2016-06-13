@@ -21,13 +21,9 @@
  */
 package de.geeksfactory.opacclient.objects;
 
-import android.graphics.Bitmap;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-
-import de.geeksfactory.opacclient.apis.OpacApi;
 
 /**
  * Object representing all details of a media item
@@ -35,90 +31,13 @@ import de.geeksfactory.opacclient.apis.OpacApi;
  * @author Raphael Michel
  */
 public class DetailledItem implements CoverHolder {
-    /**
-     * The barcode of a copy. Optional.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_BARCODE = "barcode";
-    /**
-     * The location (like "third floor") of a copy. Optional.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_LOCATION = "location";
-    /**
-     * The department (like "music library") of a copy. Optional.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_DEPARTMENT = "department";
-    /**
-     * The branch a copy is in. Should be set, if your library has more than one
-     * branch.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_BRANCH = "branch";
-    /**
-     * Current status of a copy ("lent", "free", ...). Should be set.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_STATUS = "status";
-    /**
-     * Expected date of return if a copy is lent out. Optional.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_RETURN = "returndate";
-    /**
-     * Expected date of return if a copy is lent out as a timestamp. Optional.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_RETURN_TIMESTAMP = "returndate_ts";
-    /**
-     * Number of pending reservations if a copy is currently lent out. Optional.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}:
-     */
-    public static final String KEY_COPY_RESERVATIONS = "reservations";
-    /**
-     * Identification in the libraries' shelf system. Optional.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}.
-     *
-     * @since 2.0.10
-     */
-    public static final String KEY_COPY_SHELFMARK = "signature";
-    /**
-     * Reservation information copy-based reservations.
-     * <p/>
-     * ContentValues key for {@link #addCopy(Map)}.
-     *
-     * @since 2.0.10
-     */
-    public static final String KEY_COPY_RESINFO = "resinfo";
-    /**
-     * Unique media identifier of a child item for
-     * {@link OpacApi#getResultById(String, String)}. Required.
-     * <p/>
-     * ContentValues key for {@link #addVolume(Map)}:
-     */
-    public static final String KEY_CHILD_ID = "id";
-    /**
-     * Title of a child item. Required.
-     * <p/>
-     * ContentValues key for {@link #addVolume(Map)}:
-     */
-    public static final String KEY_CHILD_TITLE = "titel";
     private List<Detail> details = new ArrayList<>();
-    private List<Map<String, String>> copies = new ArrayList<>();
-    private List<Map<String, String>> volumes = new ArrayList<>();
+    private List<Copy> copies = new ArrayList<>();
+    private List<Volume> volumes = new ArrayList<>();
     private String cover;
     private String title;
-    private Bitmap coverBitmap;
+    private SearchResult.MediaType mediaType;
+    private byte[] coverBitmap;
     private boolean reservable;
     private String reservation_info;
     private boolean bookable;
@@ -163,7 +82,7 @@ public class DetailledItem implements CoverHolder {
      * Get cover image bitmap
      */
     @Override
-    public Bitmap getCoverBitmap() {
+    public byte[] getCoverBitmap() {
         return coverBitmap;
     }
 
@@ -171,7 +90,7 @@ public class DetailledItem implements CoverHolder {
      * Set cover image bitmap
      */
     @Override
-    public void setCoverBitmap(Bitmap coverBitmap) {
+    public void setCoverBitmap(byte[] coverBitmap) {
         this.coverBitmap = coverBitmap;
     }
 
@@ -201,7 +120,8 @@ public class DetailledItem implements CoverHolder {
                 + ", volumes=" + volumes + ", cover=" + cover + ", title="
                 + title + ", coverBitmap=" + coverBitmap + ", reservable="
                 + reservable + ", reservation_info=" + reservation_info
-                + ", id=" + id + ", volumesearch=" + volumesearch + "]";
+                + ", id=" + id + ", volumesearch=" + volumesearch + ", mediatype=" + mediaType +
+                "]";
     }
 
     /**
@@ -218,9 +138,9 @@ public class DetailledItem implements CoverHolder {
      * List of copies of this item available
      *
      * @return List of copies
-     * @see #addCopy(Map)
+     * @see #addCopy(Copy)
      */
-    public List<Map<String, String>> getCopies() {
+    public List<Copy> getCopies() {
         return copies;
     }
 
@@ -228,9 +148,9 @@ public class DetailledItem implements CoverHolder {
      * Set list of copies of this item available
      *
      * @param copies List of copies
-     * @see #addCopy(Map)
+     * @see #addCopy(Copy)
      */
-    public void setCopies(List<Map<String, String>> copies) {
+    public void setCopies(List<Copy> copies) {
         this.copies = copies;
     }
 
@@ -238,9 +158,9 @@ public class DetailledItem implements CoverHolder {
      * List of child items (e.g. volumes of a series) available
      *
      * @return List of child items available
-     * @see #addVolume(Map)
+     * @see #addVolume(Volume)
      */
-    public List<Map<String, String>> getVolumes() {
+    public List<Volume> getVolumes() {
         return volumes;
     }
 
@@ -254,26 +174,19 @@ public class DetailledItem implements CoverHolder {
     }
 
     /**
-     * Add a copy. <code>copy</code> may contain any of the
-     * <code>KEY_COPY_*</code> constants as keys.
+     * Add a copy.
      *
      * @param copy An object representing a copy
      * @see Detail
      */
-    public void addCopy(Map<String, String> copy) {
+    public void addCopy(Copy copy) {
         copies.add(copy);
     }
 
     /**
-     * Add a child item. <code>child</code> must contain all of the
-     * <code>KEY_CHILD_*</code> constants as keys. This is to be used, if a
-     * search result is not a real item but more like a "meta item" for a
-     * collection, for example a "Harry Potter" item containing a collection of
-     * all seven Harry Potter books as child items.
-     *
-     * @see Detail
+     * Add a child item.
      */
-    public void addVolume(Map<String, String> child) {
+    public void addVolume(Volume child) {
         volumes.add(child);
     }
 
@@ -385,5 +298,19 @@ public class DetailledItem implements CoverHolder {
      */
     public void setCollectionId(String collectionid) {
         this.collectionid = collectionid;
+    }
+
+    /**
+     * @return this item's media type
+     */
+    public SearchResult.MediaType getMediaType() {
+        return mediaType;
+    }
+
+    /**
+     * @param mediaType the media type to set
+     */
+    public void setMediaType(SearchResult.MediaType mediaType) {
+        this.mediaType = mediaType;
     }
 }

@@ -6,18 +6,19 @@ import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.message.BasicNameValuePair;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -30,18 +31,22 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import de.geeksfactory.opacclient.NotReachableException;
-import de.geeksfactory.opacclient.SSLSecurityException;
 import de.geeksfactory.opacclient.apis.OpacApi.MultiStepResult.Status;
 import de.geeksfactory.opacclient.i18n.StringProvider;
+import de.geeksfactory.opacclient.networking.HttpClientFactory;
 import de.geeksfactory.opacclient.networking.HttpUtils;
+import de.geeksfactory.opacclient.networking.NotReachableException;
+import de.geeksfactory.opacclient.networking.SSLSecurityException;
 import de.geeksfactory.opacclient.objects.Account;
 import de.geeksfactory.opacclient.objects.AccountData;
+import de.geeksfactory.opacclient.objects.Copy;
 import de.geeksfactory.opacclient.objects.Detail;
 import de.geeksfactory.opacclient.objects.DetailledItem;
 import de.geeksfactory.opacclient.objects.Filter;
 import de.geeksfactory.opacclient.objects.Filter.Option;
+import de.geeksfactory.opacclient.objects.LentItem;
 import de.geeksfactory.opacclient.objects.Library;
+import de.geeksfactory.opacclient.objects.ReservedItem;
 import de.geeksfactory.opacclient.objects.SearchRequestResult;
 import de.geeksfactory.opacclient.objects.SearchResult;
 import de.geeksfactory.opacclient.objects.SearchResult.MediaType;
@@ -72,6 +77,7 @@ public class Adis extends BaseApi implements OpacApi {
         types.put("Elektronische Ressource", MediaType.EBOOK);
         types.put("E-Book", MediaType.EBOOK);
         types.put("Karte", MediaType.MAP);
+        types.put("E-Ressource", MediaType.EBOOK);
 
         // TODO: The following fields from Berlin make no sense and don't work
         // when they are displayed alone.
@@ -93,7 +99,6 @@ public class Adis extends BaseApi implements OpacApi {
     protected List<NameValuePair> s_pageform;
     protected int s_lastpage;
     protected Document s_reusedoc;
-    protected boolean s_accountcalled;
 
     public static Map<String, List<String>> getQueryParams(String url) {
         try {
@@ -127,7 +132,7 @@ public class Adis extends BaseApi implements OpacApi {
     public Document htmlGet(String url) throws
             IOException {
 
-        if (!url.contains("requestCount")) {
+        if (!url.contains("requestCount") && s_requestCount >= 0) {
             url = url + (url.contains("?") ? "&" : "?") + "requestCount="
                     + s_requestCount;
         }
@@ -138,31 +143,31 @@ public class Adis extends BaseApi implements OpacApi {
         try {
             response = http_client.execute(httpget);
         } catch (javax.net.ssl.SSLPeerUnverifiedException e) {
-            throw new SSLSecurityException();
+            throw new SSLSecurityException(e.getMessage());
         } catch (javax.net.ssl.SSLException e) {
             // Can be "Not trusted server certificate" or can be a
             // aborted/interrupted handshake/connection
             if (e.getMessage().contains("timed out")
                     || e.getMessage().contains("reset by")) {
                 e.printStackTrace();
-                throw new NotReachableException();
+                throw new NotReachableException(e.getMessage());
             } else {
-                throw new SSLSecurityException();
+                throw new SSLSecurityException(e.getMessage());
             }
         } catch (InterruptedIOException e) {
             e.printStackTrace();
-            throw new NotReachableException();
+            throw new NotReachableException(e.getMessage());
         } catch (IOException e) {
             if (e.getMessage() != null && e.getMessage().contains("Request aborted")) {
                 e.printStackTrace();
-                throw new NotReachableException();
+                throw new NotReachableException(e.getMessage());
             } else {
                 throw e;
             }
         }
 
         if (response.getStatusLine().getStatusCode() >= 400) {
-            throw new NotReachableException();
+            throw new NotReachableException(response.getStatusLine().getReasonPhrase());
         }
         String html = convertStreamToString(response.getEntity().getContent(),
                 getDefaultEncoding());
@@ -194,38 +199,38 @@ public class Adis extends BaseApi implements OpacApi {
             data.add(new BasicNameValuePair("requestCount", s_requestCount + ""));
         }
 
-        httppost.setEntity(new UrlEncodedFormEntity(data));
+        httppost.setEntity(new UrlEncodedFormEntity(data, getDefaultEncoding()));
         HttpResponse response;
 
         try {
             response = http_client.execute(httppost);
 
         } catch (javax.net.ssl.SSLPeerUnverifiedException e) {
-            throw new SSLSecurityException();
+            throw new SSLSecurityException(e.getMessage());
         } catch (javax.net.ssl.SSLException e) {
             // Can be "Not trusted server certificate" or can be a
             // aborted/interrupted handshake/connection
             if (e.getMessage().contains("timed out")
                     || e.getMessage().contains("reset by")) {
                 e.printStackTrace();
-                throw new NotReachableException();
+                throw new NotReachableException(e.getMessage());
             } else {
-                throw new SSLSecurityException();
+                throw new SSLSecurityException(e.getMessage());
             }
         } catch (InterruptedIOException e) {
             e.printStackTrace();
-            throw new NotReachableException();
+            throw new NotReachableException(e.getMessage());
         } catch (IOException e) {
             if (e.getMessage() != null && e.getMessage().contains("Request aborted")) {
                 e.printStackTrace();
-                throw new NotReachableException();
+                throw new NotReachableException(e.getMessage());
             } else {
                 throw e;
             }
         }
 
         if (response.getStatusLine().getStatusCode() >= 400) {
-            throw new NotReachableException();
+            throw new NotReachableException(response.getStatusLine().getReasonPhrase());
         }
         String html = convertStreamToString(response.getEntity().getContent(),
                 getDefaultEncoding());
@@ -245,9 +250,9 @@ public class Adis extends BaseApi implements OpacApi {
 
     @Override
     public void start() throws IOException {
-        s_accountcalled = false;
 
         try {
+            s_requestCount = -1;
             Document doc = htmlGet(opac_url + "?"
                     + data.getString("startparams"));
 
@@ -292,10 +297,12 @@ public class Adis extends BaseApi implements OpacApi {
         Document doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
                 + s_service + "&sp=" + s_exts);
 
-        int cnt = 0;
+        int dropdownTextCount = 0;
+        int totalCount = 0;
         List<NameValuePair> nvpairs = new ArrayList<>();
         for (SearchQuery query : queries) {
             if (!query.getValue().equals("")) {
+                totalCount++;
 
                 if (query.getSearchField() instanceof DropdownSearchField) {
                     doc.select("select#" + query.getKey())
@@ -303,7 +310,16 @@ public class Adis extends BaseApi implements OpacApi {
                     continue;
                 }
 
-                cnt++;
+                if (query.getSearchField() instanceof TextSearchField &&
+                        query.getSearchField().getData() != null &&
+                        !query.getSearchField().getData().optBoolean("selectable", true) &&
+                        doc.select("#" + query.getKey()).size() > 0) {
+                    doc.select("#" + query.getKey())
+                       .val(query.getValue());
+                    continue;
+                }
+
+                dropdownTextCount++;
 
                 if (s_exts.equals("SS2")
                         || (query.getSearchField().getData() != null && !query
@@ -311,14 +327,21 @@ public class Adis extends BaseApi implements OpacApi {
                         .optBoolean("selectable", true))) {
                     doc.select("input#" + query.getKey()).val(query.getValue());
                 } else {
-                    doc.select("select#SUCH01_" + cnt).val(query.getKey());
-                    doc.select("input#FELD01_" + cnt).val(query.getValue());
+                    if (doc.select("select#SUCH01_1").size() == 0) {
+                        // Hack needed for Nürnberg
+                        doc.select("input[fld=FELD01_" + dropdownTextCount + "]").first()
+                           .previousElementSibling().val(query.getKey());
+                        doc.select("input[fld=FELD01_" + dropdownTextCount + "]")
+                           .val(query.getValue());
+                    } else {
+                        doc.select("select#SUCH01_" + dropdownTextCount).val(query.getKey());
+                        doc.select("input#FELD01_" + dropdownTextCount).val(query.getValue());
+                    }
                 }
 
-                if (cnt > 4) {
-                    throw new OpacErrorException(
-                            stringProvider.getQuantityString(
-                                    StringProvider.LIMITED_NUM_OF_CRITERIA, 4, 4));
+                if (dropdownTextCount > 4) {
+                    throw new OpacErrorException(stringProvider.getQuantityString(
+                            StringProvider.LIMITED_NUM_OF_CRITERIA, 4, 4));
                 }
             }
         }
@@ -334,7 +357,7 @@ public class Adis extends BaseApi implements OpacApi {
         nvpairs.add(new BasicNameValuePair("$Toolbar_0.x", "1"));
         nvpairs.add(new BasicNameValuePair("$Toolbar_0.y", "1"));
 
-        if (cnt == 0) {
+        if (totalCount == 0) {
             throw new OpacErrorException(
                     stringProvider.getString(StringProvider.NO_CRITERIA_INPUT));
         }
@@ -380,28 +403,58 @@ public class Adis extends BaseApi implements OpacApi {
         Pattern patId = Pattern
                 .compile("javascript:.*htmlOnLink\\('([0-9A-Za-z]+)'\\)");
 
-        for (Element tr : doc.select("table.rTable_table tbody tr")) {
+        int nr = 1;
+
+        String selector_row, selector_link, selector_img, selector_num;
+        if (doc.select("table.rTable_table tbody").size() > 0) {
+            selector_row = "table.rTable_table tbody tr";
+            selector_link = ".rTable_td_text a";
+            selector_img = ".rTable_td_img img, .rTable_td_text img";
+            selector_num = "tr td:first-child";
+        } else {
+            // Berlin
+            selector_row = ".rList li.rList_li_even, .rList li.rList_li_odd";
+            selector_link = ".rList_titel a";
+            selector_img = ".rlist_icon img, .rList_titel img";
+            selector_num = ".rList_num";
+        }
+        for (Element tr : doc.select(selector_row)) {
             SearchResult res = new SearchResult();
 
-            res.setInnerhtml(tr.select(".rTable_td_text a").first().html());
-            res.setNr(Integer.parseInt(tr.child(0).text().trim()));
+            Element innerele = tr.select(selector_link).first();
+            innerele.select("img").remove();
+            res.setInnerhtml(innerele.html());
+            try {
+                res.setNr(Integer.parseInt(tr.select(selector_num).text().trim()));
+            } catch (NumberFormatException e) {
+                res.setNr(nr);
+            }
 
-            Matcher matcher = patId.matcher(tr.select(".rTable_td_text a")
-                                              .first().attr("href"));
+            Matcher matcher = patId.matcher(tr.select(selector_link).first().attr("href"));
             if (matcher.matches()) {
                 res.setId(matcher.group(1));
             }
 
-            String typetext = tr.select(".rTable_td_img img").first()
-                                .attr("title");
-            if (types.containsKey(typetext)) {
-                res.setType(types.get(typetext));
-            } else if (typetext.contains("+")
-                    && types.containsKey(typetext.split("\\+")[0].trim())) {
-                res.setType(types.get(typetext.split("\\+")[0].trim()));
+            for (Element img : tr.select(selector_img)) {
+                String ttext = img.attr("title");
+                if (types.containsKey(ttext)) {
+                    res.setType(types.get(ttext));
+                } else if (ttext.contains("+")
+                        && types.containsKey(ttext.split("\\+")[0].trim())) {
+                    res.setType(types.get(ttext.split("\\+")[0].trim()));
+                } else if (ttext.matches(".*ist verf.+gbar") ||
+                        ttext.contains("is available") ||
+                        img.attr("href").contains("verfu_ja")) {
+                    res.setStatus(SearchResult.Status.GREEN);
+                } else if (ttext.matches(".*nicht verf.+gbar") ||
+                        ttext.contains("not available") ||
+                        img.attr("href").contains("verfu_nein")) {
+                    res.setStatus(SearchResult.Status.RED);
+                }
             }
 
             results.add(res);
+            nr++;
         }
 
         s_pageform = new ArrayList<>();
@@ -420,8 +473,8 @@ public class Adis extends BaseApi implements OpacApi {
     }
 
     @Override
-    public void init(Library library) {
-        super.init(library);
+    public void init(Library library, HttpClientFactory httpClientFactory) {
+        super.init(library, httpClientFactory);
         this.library = library;
         this.data = library.getData();
         try {
@@ -523,18 +576,26 @@ public class Adis extends BaseApi implements OpacApi {
             if (tr.children().size() < 2) {
                 continue;
             }
-            if (tr.child(1).text().contains("hier klicken")) {
-                res.addDetail(new Detail(tr.child(0).text().trim(), tr.child(1)
-                                                                      .select("a").first()
-                                                                      .absUrl("href")));
+            String title = tr.child(0).text().trim();
+            String value = tr.child(1).text().trim();
+            if (value.contains("hier klicken") || value.startsWith("zur ") ||
+                    title.contains("URL")) {
+                res.addDetail(new Detail(title, tr.child(1).select("a").first().absUrl("href")));
             } else {
-                res.addDetail(new Detail(tr.child(0).text().trim(), tr.child(1)
-                                                                      .text().trim()));
+                res.addDetail(new Detail(title, value));
             }
 
-            if (tr.child(0).text().trim().contains("Titel")
-                    && res.getTitle() == null) {
-                res.setTitle(tr.child(1).text().split("[:/;]")[0].trim());
+            if (title.contains("Titel") && res.getTitle() == null) {
+                res.setTitle(value.split("[:/;]")[0].trim());
+            }
+        }
+
+        if (res.getTitle() == null) {
+            for (Detail d : res.getDetails()) {
+                if (d.getDesc().contains("Gesamtwerk")) {
+                    res.setTitle(d.getContent());
+                    break;
+                }
             }
         }
 
@@ -546,40 +607,47 @@ public class Adis extends BaseApi implements OpacApi {
 
         Map<Integer, String> colmap = new HashMap<>();
         int i = 0;
-        for (Element th : doc.select("#R08 table.rTable_table thead tr th")) {
+        for (Element th : doc
+                .select("#R08 table.rTable_table thead tr th, " +
+                        "#R09 table.rTable_table thead tr th")) {
             String head = th.text().trim();
-            if (head.contains("Bibliothek")) {
-                colmap.put(i, DetailledItem.KEY_COPY_BRANCH);
-            } else if (head.contains("Standort")) {
-                colmap.put(i, DetailledItem.KEY_COPY_LOCATION);
-            } else if (head.contains("Signatur")) {
-                colmap.put(i, DetailledItem.KEY_COPY_SHELFMARK);
+            if (head.contains("Bibliothek") || head.contains("Library")) {
+                colmap.put(i, "branch");
+            } else if (head.contains("Standort") || head.contains("Location")) {
+                colmap.put(i, "location");
+            } else if (head.contains("Signatur") || head.contains("Call number")) {
+                colmap.put(i, "signature");
+            } else if (head.contains("URL")) {
+                colmap.put(i, "url");
             } else if (head.contains("Status") || head.contains("Hinweis")
-                    || head.matches(".*Verf.+gbarkeit.*")) {
-                colmap.put(i, DetailledItem.KEY_COPY_STATUS);
+                    || head.matches(".*Verf.+gbarkeit.*") || head.contains("Status")) {
+                colmap.put(i, "status");
             }
             i++;
         }
 
-        for (Element tr : doc.select("#R08 table.rTable_table tbody tr")) {
-            Map<String, String> line = new HashMap<>();
+        DateTimeFormatter fmt = DateTimeFormat.forPattern("dd.MM.yyyy").withLocale(Locale.GERMAN);
+        for (Element tr : doc.select("#R08 table.rTable_table tbody tr," +
+                "#R09 table.rTable_table tbody tr")) {
+            Copy copy = new Copy();
             for (Entry<Integer, String> entry : colmap.entrySet()) {
-                if (entry.getValue().equals(DetailledItem.KEY_COPY_STATUS)) {
+                if (entry.getValue().equals("status")) {
                     String status = tr.child(entry.getKey()).text().trim();
                     if (status.contains(" am: ")) {
-                        line.put(DetailledItem.KEY_COPY_STATUS,
-                                status.split("-")[0]);
-                        line.put(DetailledItem.KEY_COPY_RETURN,
-                                status.split(": ")[1]);
+                        copy.setStatus(status.split("-")[0]);
+                        try {
+                            copy.setReturnDate(fmt.parseLocalDate(status.split(": ")[1]));
+                        } catch (IllegalArgumentException e) {
+                            e.printStackTrace();
+                        }
                     } else {
-                        line.put(DetailledItem.KEY_COPY_STATUS, status);
+                        copy.setStatus(status);
                     }
                 } else {
-                    line.put(entry.getValue(), tr.child(entry.getKey()).text()
-                                                 .trim());
+                    copy.set(entry.getValue(), tr.child(entry.getKey()).text().trim());
                 }
             }
-            res.addCopy(line);
+            res.addCopy(copy);
         }
 
         // Reset
@@ -706,11 +774,47 @@ public class Adis extends BaseApi implements OpacApi {
                 }
                 res = new ReservationResult(
                         MultiStepResult.Status.SELECTION_NEEDED, doc.select(
-                        "#F23").text());
+                        "#AUSGAB_1").first().parent().select("span").text());
+                res.setSelection(sel);
+            } else if (doc.select("#FSET01 select[name=select$0]").size() > 0 &&
+                    (selection == null || !selection.contains("_SEP_"))) {
+                // Munich: "Benachrichtigung mit E-Mail"
+                List<Map<String, String>> sel = new ArrayList<>();
+                for (Element opt : doc.select("select[name=select$0] option")) {
+                    if (opt.text().trim().length() > 0) {
+                        Map<String, String> selopt = new HashMap<>();
+                        selopt.put("key", opt.val());
+                        if (selection != null) {
+                            selopt.put("value", opt.text() + "_SEP_" + selection);
+                        } else {
+                            selopt.put("value", opt.text());
+                        }
+                        sel.add(selopt);
+                    }
+                }
+                res = new ReservationResult(
+                        MultiStepResult.Status.SELECTION_NEEDED, doc.select(
+                        "#FSET01 select[name=select$0]").first().parent().select("span").text());
                 res.setSelection(sel);
             } else if (selection != null || doc.select("#AUSGAB_1").size() == 0) {
-                if (doc.select("#AUSGAB_1").size() > 0) {
-                    doc.select("#AUSGAB_1").attr("value", selection);
+                if (doc.select("#AUSGAB_1").size() > 0 && selection != null) {
+                    if (selection.contains("_SEP_")) {
+                        doc.select("#AUSGAB_1").attr("value", selection.split("_SEP_")[1]);
+                    } else {
+                        doc.select("#AUSGAB_1").attr("value", selection);
+                    }
+                }
+                if (doc.select("#FSET01 select[name=select$0]").size() > 0 && selection != null) {
+                    if (selection.contains("_SEP_")) {
+                        doc.select("#AUSGAB_1").attr("value", selection.split("_SEP_")[0]);
+                    } else {
+                        doc.select("#AUSGAB_1").attr("value", selection);
+                    }
+                }
+                if (doc.select("#BENJN_1").size() > 0) {
+                    // Notification not requested because some libraries notify by snail mail
+                    // and take a fee for it (Example: Stuttgart_Uni)
+                    doc.select("#BENJN_1").attr("value", "Nein");
                 }
                 if (doc.select(".message h1").size() > 0) {
                     String msg = doc.select(".message h1").text().trim();
@@ -843,28 +947,25 @@ public class Adis extends BaseApi implements OpacApi {
             String selection) throws IOException {
         String alink = null;
         Document doc;
-        if (s_accountcalled) {
-            alink = media.split("\\|")[1].replace("requestCount=", "fooo=");
-        } else {
-            start();
-            doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
-                    + s_service + "&sp=SBK");
-            try {
-                doc = handleLoginForm(doc, account);
-            } catch (OpacErrorException e) {
-                return new ProlongResult(Status.ERROR, e.getMessage());
-            }
-            for (Element tr : doc.select(".rTable_div tr")) {
-                if (tr.select("a").size() == 1) {
-                    if (tr.select("a").first().absUrl("href")
-                          .contains("sp=SZA")) {
-                        alink = tr.select("a").first().absUrl("href");
-                    }
+
+        start();
+        doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
+                + s_service + "&sp=SBK");
+        try {
+            doc = handleLoginForm(doc, account);
+        } catch (OpacErrorException e) {
+            return new ProlongResult(Status.ERROR, e.getMessage());
+        }
+        for (Element tr : doc.select(".rTable_div tr")) {
+            if (tr.select("a").size() == 1) {
+                if (tr.select("a").first().absUrl("href")
+                      .contains("sp=SZA")) {
+                    alink = tr.select("a").first().absUrl("href");
                 }
             }
-            if (alink == null) {
-                return new ProlongResult(Status.ERROR);
-            }
+        }
+        if (alink == null) {
+            return new ProlongResult(Status.ERROR);
         }
 
         doc = htmlGet(alink);
@@ -916,28 +1017,24 @@ public class Adis extends BaseApi implements OpacApi {
             String selection) throws IOException {
         String alink = null;
         Document doc;
-        if (s_accountcalled) {
-            alink = s_alink.replace("requestCount=", "fooo=");
-        } else {
-            start();
-            doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
-                    + s_service + "&sp=SBK");
-            try {
-                doc = handleLoginForm(doc, account);
-            } catch (OpacErrorException e) {
-                return new ProlongAllResult(Status.ERROR, e.getMessage());
-            }
-            for (Element tr : doc.select(".rTable_div tr")) {
-                if (tr.select("a").size() == 1) {
-                    if (tr.select("a").first().absUrl("href")
-                          .contains("sp=SZA")) {
-                        alink = tr.select("a").first().absUrl("href");
-                    }
+        start();
+        doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
+                + s_service + "&sp=SBK");
+        try {
+            doc = handleLoginForm(doc, account);
+        } catch (OpacErrorException e) {
+            return new ProlongAllResult(Status.ERROR, e.getMessage());
+        }
+        for (Element tr : doc.select(".rTable_div tr")) {
+            if (tr.select("a").size() == 1) {
+                if (tr.select("a").first().absUrl("href")
+                      .contains("sp=SZA")) {
+                    alink = tr.select("a").first().absUrl("href");
                 }
             }
-            if (alink == null) {
-                return new ProlongAllResult(Status.ERROR);
-            }
+        }
+        if (alink == null) {
+            return new ProlongAllResult(Status.ERROR);
         }
 
         doc = htmlGet(alink);
@@ -993,31 +1090,37 @@ public class Adis extends BaseApi implements OpacApi {
             String selection) throws IOException, OpacErrorException {
         String rlink = null;
         Document doc;
-        if (s_accountcalled) {
-            rlink = media.split("\\|")[1].replace("requestCount=", "fooo=");
-        } else {
-            start();
-            doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
-                    + s_service + "&sp=SBK");
-            try {
-                doc = handleLoginForm(doc, account);
-            } catch (OpacErrorException e) {
-                return new CancelResult(Status.ERROR, e.getMessage());
-            }
-            for (Element tr : doc.select(".rTable_div tr")) {
-                if (tr.select("a").size() == 1) {
-                    if ((tr.text().contains("Reservationen") || tr.text().contains("Vormerkung"))
-                            && !tr.child(0).text().trim().equals("")
-                            && tr.select("a").first().attr("href")
-                                 .toUpperCase(Locale.GERMAN)
-                                 .contains("SP=SZM")) {
-                        rlink = tr.select("a").first().absUrl("href");
-                    }
+        rlink = media.split("\\|")[1].replace("requestCount=", "fooo=");
+        start();
+        doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
+                + s_service + "&sp=SBK");
+        try {
+            doc = handleLoginForm(doc, account);
+        } catch (OpacErrorException e) {
+            return new CancelResult(Status.ERROR, e.getMessage());
+        }
+        for (Element tr : doc.select(".rTable_div tr")) {
+            String url = media.split("\\|")[1].toUpperCase(Locale.GERMAN);
+            String sp = "SZM";
+            if (url.contains("SP=")) {
+                Map<String, String> qp = getQueryParamsFirst(url);
+                if (qp.containsKey("SP")) {
+                    sp = qp.get("SP");
                 }
             }
-            if (rlink == null) {
-                return new CancelResult(Status.ERROR);
+            if (tr.select("a").size() == 1) {
+                if ((tr.text().contains("Reservationen") || tr.text().contains("Vormerkung") ||
+                        tr.text().contains("Bestellung"))
+                        && !tr.child(0).text().trim().equals("")
+                        && tr.select("a").first().attr("href")
+                             .toUpperCase(Locale.GERMAN)
+                             .contains("SP=" + sp)) {
+                    rlink = tr.select("a").first().absUrl("href");
+                }
             }
+        }
+        if (rlink == null) {
+            return new CancelResult(Status.ERROR);
         }
 
         doc = htmlGet(rlink);
@@ -1077,12 +1180,12 @@ public class Adis extends BaseApi implements OpacApi {
                 adata.setValidUntil(tr.child(1).text().trim());
             }
         }
-        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy", Locale.GERMAN);
+        DateTimeFormatter fmt = DateTimeFormat.forPattern("dd.MM.yyyy").withLocale(Locale.GERMAN);
 
         // Ausleihen
         String alink = null;
         int anum = 0;
-        List<Map<String, String>> lent = new ArrayList<>();
+        List<LentItem> lent = new ArrayList<>();
         for (Element tr : doc.select(".rTable_div tr")) {
             if (tr.select("a").size() == 1) {
                 if (tr.select("a").first().absUrl("href").contains("sp=SZA")) {
@@ -1116,9 +1219,8 @@ public class Adis extends BaseApi implements OpacApi {
                 adoc = htmlPost(opac_url + ";jsessionid=" + s_sid, form);
             }
             for (Element tr : adoc.select(".rTable_div tbody tr")) {
-                Map<String, String> line = new HashMap<>();
-                String text = Jsoup.parse(
-                        tr.child(3).html().replaceAll("(?i)<br[^>]*>", "#"))
+                LentItem item = new LentItem();
+                String text = Jsoup.parse(tr.child(3).html().replaceAll("(?i)<br[^>]*>", "#"))
                                    .text();
                 if (text.contains(" / ")) {
                     // Format "Titel / Autor #Sig#Nr", z.B. normale Ausleihe in Berlin
@@ -1127,38 +1229,35 @@ public class Adis extends BaseApi implements OpacApi {
                     if (split_title_author) {
                         title = title.replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1");
                     }
-                    line.put(AccountData.KEY_LENT_TITLE, title.trim());
+                    item.setTitle(title.trim());
                     if (split.length > 1) {
-                        line.put(AccountData.KEY_LENT_AUTHOR,
-                                split[1].replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
+                        item.setAuthor(split[1].replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
                     }
                 } else {
                     // Format "Autor: Titel - Verlag - ISBN:... #Nummer", z.B. Fernleihe in Berlin
                     String[] split = text.split("#");
                     String[] aut_tit = split[0].split(": ");
-                    line.put(AccountData.KEY_LENT_AUTHOR,
-                            aut_tit[0].replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
+                    item.setAuthor(aut_tit[0].replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
                     if (aut_tit.length > 1) {
-                        line.put(AccountData.KEY_LENT_TITLE,
+                        item.setTitle(
                                 aut_tit[1].replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
                     }
                 }
-                line.put(AccountData.KEY_LENT_DEADLINE, tr.child(1).text()
-                                                          .trim());
+                String date = tr.child(1).text().trim();
+                if (date.contains("-")) {
+                    // Nürnberg: "29.03.2016 - 26.04.2016"
+                    // for beginning and end date in one field
+                    date = date.split("-")[1].trim();
+                }
                 try {
-                    line.put(AccountData.KEY_LENT_DEADLINE_TIMESTAMP, String
-                            .valueOf(sdf.parse(tr.child(1).text().trim())
-                                        .getTime()));
-                } catch (ParseException e) {
+                    item.setDeadline(fmt.parseLocalDate(date));
+                } catch (IllegalArgumentException e) {
                     e.printStackTrace();
                 }
-                line.put(AccountData.KEY_LENT_BRANCH, tr.child(2).text().trim());
-                line.put(AccountData.KEY_LENT_LINK,
-                        tr.select("input[type=checkbox]").attr("name") + "|"
-                                + alink);
-                // line.put(AccountData.KEY_LENT_RENEWABLE, tr.child(4).text()
-                // .matches(".*nicht verl.+ngerbar.*") ? "N" : "Y");
-                lent.add(line);
+                item.setHomeBranch(tr.child(2).text().trim());
+                item.setProlongData(tr.select("input[type=checkbox]").attr("name") + "|" + alink);
+                // item.setRenewable(tr.child(4).text().matches(".*nicht verl.+ngerbar.*"));
+                lent.add(item);
             }
             assert (lent.size() == anum);
             form = new ArrayList<>();
@@ -1182,13 +1281,14 @@ public class Adis extends BaseApi implements OpacApi {
 
         List<String[]> rlinks = new ArrayList<>();
         int rnum = 0;
-        List<Map<String, String>> res = new ArrayList<>();
+        List<ReservedItem> res = new ArrayList<>();
         for (Element tr : doc.select(".rTable_div tr")) {
             if (tr.select("a").size() == 1) {
                 if ((tr.text().contains("Reservationen")
                         || tr.text().contains("Vormerkung")
                         || tr.text().contains("Fernleihbestellung")
                         || tr.text().contains("Bereitstellung")
+                        || tr.text().contains("Bestellw")
                         || tr.text().contains("Magazin"))
                         && !tr.child(0).text().trim().equals("")) {
                     rlinks.add(new String[]{
@@ -1206,46 +1306,40 @@ public class Adis extends BaseApi implements OpacApi {
             boolean stacks = rdoc.html().contains("aus dem Magazin");
             boolean provision = rdoc.html().contains("Ihre Bereitstellung");
             Map<String, Integer> colmap = new HashMap<>();
-            colmap.put(AccountData.KEY_RESERVATION_TITLE, 2);
-            colmap.put(AccountData.KEY_RESERVATION_BRANCH, 1);
-            colmap.put(AccountData.KEY_RESERVATION_EXPIRE, 0);
+            colmap.put("title", 2);
+            colmap.put("branch", 1);
+            colmap.put("expirationdate", 0);
             int i = 0;
             for (Element th : rdoc.select(".rTable_div thead tr th")) {
                 if (th.text().contains("Bis")) {
-                    colmap.put(AccountData.KEY_RESERVATION_EXPIRE, i);
+                    colmap.put("expirationdate", i);
                 }
                 if (th.text().contains("Ausgabeort")) {
-                    colmap.put(AccountData.KEY_RESERVATION_BRANCH, i);
+                    colmap.put("branch", i);
                 }
                 if (th.text().contains("Titel")) {
-                    colmap.put(AccountData.KEY_RESERVATION_TITLE, i);
+                    colmap.put("title", i);
                 }
                 i++;
 
             }
             for (Element tr : rdoc.select(".rTable_div tbody tr")) {
                 if (tr.children().size() >= 4) {
-                    Map<String, String> line = new HashMap<>();
-                    String text = tr.child(
-                            colmap.get(AccountData.KEY_RESERVATION_TITLE))
-                                    .html();
-                    text = Jsoup.parse(text.replaceAll("(?i)<br[^>]*>", ";"))
-                                .text();
+                    ReservedItem item = new ReservedItem();
+                    String text = tr.child(colmap.get("title")).html();
+                    text = Jsoup.parse(text.replaceAll("(?i)<br[^>]*>", ";")).text();
                     if (split_title_author) {
                         String[] split = text.split("[:/;\n]");
-                        line.put(AccountData.KEY_RESERVATION_TITLE, split[0]
-                                .replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
+                        item.setTitle(split[0].replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
                         if (split.length > 1) {
-                            line.put(AccountData.KEY_RESERVATION_AUTHOR, split[1]
-                                    .replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1")
-                                    .trim());
+                            item.setAuthor(
+                                    split[1].replaceFirst("([^:;\n]+)[:;\n](.*)$", "$1").trim());
                         }
                     } else {
-                        line.put(AccountData.KEY_RESERVATION_TITLE, text);
+                        item.setTitle(text);
                     }
 
-                    String branch = tr.child(colmap.get(AccountData.KEY_RESERVATION_BRANCH))
-                                      .text().trim();
+                    String branch = tr.child(colmap.get("branch")).text().trim();
                     if (interlib) {
                         branch = stringProvider
                                 .getFormattedString(StringProvider.INTERLIB_BRANCH, branch);
@@ -1256,31 +1350,29 @@ public class Adis extends BaseApi implements OpacApi {
                         branch = stringProvider
                                 .getFormattedString(StringProvider.PROVISION_BRANCH, branch);
                     }
-                    line.put(AccountData.KEY_RESERVATION_BRANCH, branch);
+                    item.setBranch(branch);
 
                     if (rlink[0].contains("Abholbereit")) {
                         // Abholbereite Bestellungen
-                        line.put(AccountData.KEY_RESERVATION_READY, "bereit");
+                        item.setStatus("bereit");
                         if (tr.child(0).text().trim().length() >= 10) {
-                            line.put(
-                                    AccountData.KEY_RESERVATION_EXPIRE,
-                                    tr.child(
-                                            colmap.get(AccountData.KEY_RESERVATION_EXPIRE))
-                                      .text().trim().substring(0, 10));
+                            item.setExpirationDate(fmt.parseLocalDate(
+                                    tr.child(colmap.get("expirationdate")).text().trim()
+                                      .substring(0, 10)));
                         }
                     } else {
                         // Nicht abholbereite
                         if (tr.select("input[type=checkbox]").size() > 0
                                 && (rlink[1].toUpperCase(Locale.GERMAN).contains(
                                 "SP=SZM") || rlink[1].toUpperCase(
-                                Locale.GERMAN).contains("SP=SZW"))) {
-                            line.put(AccountData.KEY_RESERVATION_CANCEL, tr
-                                    .select("input[type=checkbox]")
-                                    .attr("name")
-                                    + "|" + rlink[1]);
+                                Locale.GERMAN).contains("SP=SZW") || rlink[1].toUpperCase(
+                                Locale.GERMAN).contains("SP=SZB"))) {
+                            item.setCancelData(
+                                    tr.select("input[type=checkbox]").attr("name") + "|" +
+                                            rlink[1]);
                         }
                     }
-                    res.add(line);
+                    res.add(item);
                 } else {
                     // This is a strange bug where sometimes there is only three
                     // columns
@@ -1328,8 +1420,7 @@ public class Adis extends BaseApi implements OpacApi {
         for (Element input : doc.select("input, select")) {
             if (!"image".equals(input.attr("type"))
                     && !"checkbox".equals(input.attr("type"))
-                    && !input.attr("value").contains("vergessen")
-                    && !input.attr("value").contains("egistrier")
+                    && !"submit".equals(input.attr("type"))
                     && !"".equals(input.attr("name"))) {
                 if (input.attr("id").equals("L#AUSW_1")
                         || input.attr("id").equals("IDENT_1")
@@ -1340,6 +1431,10 @@ public class Adis extends BaseApi implements OpacApi {
                         .attr("value")));
             }
         }
+        Element inputSend = doc.select("input[type=submit]").first();
+        form.add(new BasicNameValuePair(inputSend.attr("name"), inputSend
+                .attr("value")));
+
         doc = htmlPost(opac_url + ";jsessionid=" + s_sid, form);
 
         if (doc.select(".message h1").size() > 0) {
@@ -1354,7 +1449,7 @@ public class Adis extends BaseApi implements OpacApi {
                 }
             }
             doc = htmlPost(opac_url + ";jsessionid=" + s_sid, form);
-            if (!msg.contains("Sie sind angemeldet")) {
+            if (!msg.contains("Sie sind angemeldet") && !msg.contains("jetzt angemeldet")) {
                 throw new OpacErrorException(msg);
             }
             return doc;
@@ -1375,7 +1470,13 @@ public class Adis extends BaseApi implements OpacApi {
 
         List<SearchField> fields = new ArrayList<>();
         // dropdown to select which field you want to search in
-        for (Element opt : doc.select("#SUCH01_1 option")) {
+        Elements searchoptions = doc.select("#SUCH01_1 option");
+        if (searchoptions.size() == 0 && doc.select("input[fld=FELD01_1]").size() > 0) {
+            // Hack is needed in Nuernberg
+            searchoptions = doc.select("input[fld=FELD01_1]").first().previousElementSibling()
+                               .select("option");
+        }
+        for (Element opt : searchoptions) {
             TextSearchField field = new TextSearchField();
             field.setId(opt.attr("value"));
             field.setDisplayName(opt.text());
@@ -1409,12 +1510,8 @@ public class Adis extends BaseApi implements OpacApi {
                 field.setDisplayName(row.select("label").first().text());
                 List<Map<String, String>> values = new ArrayList<>();
                 for (Element opt : select.select("option")) {
-                    Map<String, String> value = new HashMap<>();
-                    value.put("key", opt.attr("value"));
-                    value.put("value", opt.text());
-                    values.add(value);
+                    field.addDropdownValue(opt.attr("value"), opt.text());
                 }
-                field.setDropdownValues(values);
                 fields.add(field);
             } else if (row.select("select").size() == 0
                     && row.select("input[type=text]").size() == 3
@@ -1487,21 +1584,6 @@ public class Adis extends BaseApi implements OpacApi {
     }
 
     @Override
-    public boolean isAccountSupported(Library library) {
-        return true;
-    }
-
-    @Override
-    public boolean isAccountExtendable() {
-        return false;
-    }
-
-    @Override
-    public String getAccountExtendableInfo(Account account) throws IOException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public String getShareUrl(String id, String title) {
         // TODO Auto-generated method stub
         return null;
@@ -1510,14 +1592,13 @@ public class Adis extends BaseApi implements OpacApi {
     @Override
     public int getSupportFlags() {
         return SUPPORT_FLAG_ACCOUNT_PROLONG_ALL
-                | SUPPORT_FLAG_ENDLESS_SCROLLING;
+                | SUPPORT_FLAG_ENDLESS_SCROLLING | SUPPORT_FLAG_WARN_RESERVATION_FEES;
     }
 
     @Override
     public void checkAccountData(Account account) throws IOException,
             JSONException, OpacErrorException {
         start();
-        s_accountcalled = true;
 
         Document doc = htmlGet(opac_url + ";jsessionid=" + s_sid + "?service="
                 + s_service + "&sp=SBK");

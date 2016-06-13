@@ -38,6 +38,7 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.animation.AnimationUtils;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
@@ -50,8 +51,10 @@ import de.geeksfactory.opacclient.OpacClient;
 import de.geeksfactory.opacclient.R;
 import de.geeksfactory.opacclient.apis.OpacApi;
 import de.geeksfactory.opacclient.apis.OpacApi.OpacErrorException;
+import de.geeksfactory.opacclient.barcode.BarcodeScanIntegrator;
 import de.geeksfactory.opacclient.objects.Account;
 import de.geeksfactory.opacclient.objects.Library;
+import de.geeksfactory.opacclient.reminder.ReminderHelper;
 import de.geeksfactory.opacclient.storage.AccountDataSource;
 import de.geeksfactory.opacclient.utils.ErrorReporter;
 
@@ -63,6 +66,7 @@ public class AccountEditActivity extends AppCompatActivity {
     private EditText etLabel;
     private EditText etName;
     private EditText etPassword;
+    private ImageView ivBarcode;
     private Library lib;
 
     @SuppressWarnings("SameReturnValue") // Plus Edition compatibility
@@ -78,12 +82,20 @@ public class AccountEditActivity extends AppCompatActivity {
         setSupportActionBar((Toolbar) findViewById(R.id.toolbar));
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
 
+        ImageView image = (ImageView) findViewById(R.id.ivBarcode);
+        image.setOnClickListener(new OnClickListener() {
+            public void onClick(View v) {
+                BarcodeScanIntegrator integrator = new BarcodeScanIntegrator(AccountEditActivity.this);
+                integrator.initiateScan();
+            }
+
+        });
+
         etLabel = (EditText) findViewById(R.id.etLabel);
         etName = (EditText) findViewById(R.id.etName);
         etPassword = (EditText) findViewById(R.id.etPassword);
 
         AccountDataSource data = new AccountDataSource(this);
-        data.open();
         account = data.getAccount(getIntent()
                 .getLongExtra(EXTRA_ACCOUNT_ID, -1));
 
@@ -91,8 +103,6 @@ public class AccountEditActivity extends AppCompatActivity {
             finish();
             return;
         }
-
-        data.close();
 
         if (account.getLabel().equals(getString(R.string.default_account_name))) {
             etLabel.setText("");
@@ -153,10 +163,10 @@ public class AccountEditActivity extends AppCompatActivity {
         if (etLabel.getText().toString().equals("")) {
             account.setLabel(getString(R.string.default_account_name));
         } else {
-            account.setLabel(etLabel.getText().toString());
+            account.setLabel(etLabel.getText().toString().trim());
         }
-        account.setName(etName.getText().toString());
-        account.setPassword(etPassword.getText().toString());
+        account.setName(etName.getText().toString().trim());
+        account.setPassword(etPassword.getText().toString().trim());
         if (etPassword.getText().toString().trim().equals("")) {
             // Don't check user credentials if there are no credentials
             save();
@@ -168,7 +178,6 @@ public class AccountEditActivity extends AppCompatActivity {
 
     private void delete() {
         AccountDataSource data = new AccountDataSource(this);
-        data.open();
         data.remove(account);
 
         // Check whether he deleted account was selected
@@ -183,7 +192,27 @@ public class AccountEditActivity extends AppCompatActivity {
                         .get(0).getId());
             }
         }
-        data.close();
+        new ReminderHelper((OpacClient) getApplication()).generateAlarms();
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent idata) {
+        super.onActivityResult(requestCode, resultCode, idata);
+
+        // Barcode
+        BarcodeScanIntegrator.ScanResult scanResult = BarcodeScanIntegrator
+                .parseActivityResult(requestCode, resultCode, idata);
+        if (resultCode != RESULT_CANCELED && scanResult != null) {
+            if (scanResult.getContents() == null) {
+                return;
+            } else if (scanResult.getContents().length() < 3) {
+                return;
+            } else {
+                etName.setText(scanResult.getContents());
+            }
+
+
+        }
     }
 
     @Override
@@ -255,9 +284,7 @@ public class AccountEditActivity extends AppCompatActivity {
 
     private void save() {
         AccountDataSource data = new AccountDataSource(AccountEditActivity.this);
-        data.open();
         data.update(account);
-        data.close();
         if (((OpacClient) getApplication()).getAccount().getId() == account
                 .getId()) {
             ((OpacClient) getApplication()).resetCache();
@@ -338,9 +365,11 @@ public class AccountEditActivity extends AppCompatActivity {
 
             setProgress(false);
             if (result == null) {
+                account.setPasswordKnownValid(true);
                 save();
                 close();
             } else if (result instanceof OpacErrorException) {
+                account.setPasswordKnownValid(false);
                 OpacErrorException e = (OpacErrorException) result;
                 AlertDialog.Builder builder = new AlertDialog.Builder(
                         AccountEditActivity.this);
@@ -366,6 +395,7 @@ public class AccountEditActivity extends AppCompatActivity {
                                    }
                                }).create().show();
             } else {
+                account.setPasswordKnownValid(false);
                 AlertDialog.Builder builder = new AlertDialog.Builder(
                         AccountEditActivity.this);
                 builder.setMessage(R.string.user_data_connection_error)

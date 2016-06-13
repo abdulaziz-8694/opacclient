@@ -29,6 +29,8 @@ import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.impl.client.BasicCookieStore;
 import org.apache.http.impl.cookie.BasicClientCookie;
 import org.apache.http.message.BasicNameValuePair;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.jsoup.Jsoup;
@@ -41,8 +43,6 @@ import org.jsoup.select.Elements;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -51,13 +51,17 @@ import java.util.Map;
 import java.util.Set;
 
 import de.geeksfactory.opacclient.i18n.StringProvider;
+import de.geeksfactory.opacclient.networking.HttpClientFactory;
 import de.geeksfactory.opacclient.objects.Account;
 import de.geeksfactory.opacclient.objects.AccountData;
+import de.geeksfactory.opacclient.objects.Copy;
 import de.geeksfactory.opacclient.objects.Detail;
 import de.geeksfactory.opacclient.objects.DetailledItem;
 import de.geeksfactory.opacclient.objects.Filter;
 import de.geeksfactory.opacclient.objects.Filter.Option;
+import de.geeksfactory.opacclient.objects.LentItem;
 import de.geeksfactory.opacclient.objects.Library;
+import de.geeksfactory.opacclient.objects.ReservedItem;
 import de.geeksfactory.opacclient.objects.SearchRequestResult;
 import de.geeksfactory.opacclient.objects.SearchResult;
 import de.geeksfactory.opacclient.objects.SearchResult.MediaType;
@@ -102,8 +106,8 @@ public class Heidi extends BaseApi implements OpacApi {
     }
 
     @Override
-    public void init(Library library) {
-        super.init(library);
+    public void init(Library library, HttpClientFactory httpClientFactory) {
+        super.init(library, httpClientFactory);
         this.library = library;
         this.data = library.getData();
         this.opac_url = data.optString("baseurl", "");
@@ -375,29 +379,28 @@ public class Heidi extends BaseApi implements OpacApi {
 
         if (doc.select(".ex table tr").size() > 0) {
             table = doc.select(".ex table tr");
+            DateTimeFormatter
+                    fmt = DateTimeFormat.forPattern("dd.MM.yyyy").withLocale(Locale.GERMAN);
             for (Element tr : table) {
                 if (tr.hasClass("exueber") || tr.select(".exsig").size() == 0
                         || tr.select(".exso").size() == 0
                         || tr.select(".exstatus").size() == 0) {
                     continue;
                 }
-                Map<String, String> e = new HashMap<>();
-                e.put(DetailledItem.KEY_COPY_SHELFMARK, tr.select(".exsig")
-                                                          .first().text());
-                e.put(DetailledItem.KEY_COPY_BRANCH, tr.select(".exso").first()
-                                                       .text());
+                Copy copy = new Copy();
+                copy.setShelfmark(tr.select(".exsig").first().text());
+                copy.setBranch(tr.select(".exso").first().text());
                 String status = tr.select(".exstatus").first().text();
                 if (status.contains("entliehen bis")) {
-                    e.put(DetailledItem.KEY_COPY_RETURN, status.replaceAll(
-                            "entliehen bis ([0-9.]+) .*", "$1"));
-                    e.put(DetailledItem.KEY_COPY_RESERVATIONS, status
-                            .replaceAll(".*\\(.*Vormerkungen: ([0-9]+)\\)",
-                                    "$1"));
-                    e.put(DetailledItem.KEY_COPY_STATUS, "entliehen");
+                    copy.setReturnDate(fmt.parseLocalDate(
+                            status.replaceAll("entliehen bis ([0-9.]+) .*", "$1")));
+                    copy.setReservations(
+                            status.replaceAll(".*\\(.*Vormerkungen: ([0-9]+)\\)", "$1"));
+                    copy.setStatus("entliehen");
                 } else {
-                    e.put(DetailledItem.KEY_COPY_STATUS, status);
+                    copy.setStatus(status);
                 }
-                item.addCopy(e);
+                item.addCopy(copy);
             }
         }
 
@@ -422,21 +425,6 @@ public class Heidi extends BaseApi implements OpacApi {
 
     @Override
     public DetailledItem getResult(int position) throws IOException {
-        throw new UnsupportedOperationException("Not implemented.");
-    }
-
-    @Override
-    public boolean isAccountSupported(Library library) {
-        return true;
-    }
-
-    @Override
-    public boolean isAccountExtendable() {
-        return false;
-    }
-
-    @Override
-    public String getAccountExtendableInfo(Account account) throws IOException {
         throw new UnsupportedOperationException("Not implemented.");
     }
 
@@ -470,28 +458,22 @@ public class Heidi extends BaseApi implements OpacApi {
         }
 
         DropdownSearchField field = new DropdownSearchField();
-        List<Map<String, String>> opts = new ArrayList<>();
 
         Elements zst_opts = doc.select("#teilk2 option");
         for (int i = 0; i < zst_opts.size(); i++) {
             Element opt = zst_opts.get(i);
             if (!opt.val().equals("")) {
-                Map<String, String> option = new HashMap<>();
-                option.put("key", opt.val());
-                option.put("value", opt.text());
-                opts.add(option);
+                field.addDropdownValue(opt.val(), opt.text());
             }
         }
         field.setDisplayName("Einrichtung");
         field.setId("f[teil2]");
         field.setVisible(true);
         field.setMeaning(SearchField.Meaning.BRANCH);
-        field.setDropdownValues(opts);
         fields.add(field);
 
         try {
             field = new DropdownSearchField();
-            opts = new ArrayList<>();
             Document doc2 = Jsoup.parse(httpGet(opac_url
                             + "/zweigstelle.cgi?sess=" + sessid, ENCODING, false,
                     cookieStore));
@@ -502,14 +484,13 @@ public class Heidi extends BaseApi implements OpacApi {
                     Map<String, String> option = new HashMap<>();
                     option.put("key", opt.val());
                     option.put("value", opt.text());
-                    opts.add(option);
+                    field.addDropdownValue(opt.val(), opt.text());
                 }
             }
             field.setDisplayName("Leihstelle");
             field.setId("_heidi_branch");
             field.setVisible(true);
             field.setMeaning(SearchField.Meaning.HOME_BRANCH);
-            field.setDropdownValues(opts);
             fields.add(field);
         } catch (IOException e) {
             e.printStackTrace();
@@ -712,7 +693,7 @@ public class Heidi extends BaseApi implements OpacApi {
         String html;
         Document doc;
         AccountData adata = new AccountData(account.getId());
-        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy", Locale.GERMAN);
+        DateTimeFormatter fmt = DateTimeFormat.forPattern("dd.MM.yyyy").withLocale(Locale.GERMAN);
 
         html = httpGet(opac_url + "/konto.cgi?sess=" + sessid,
                 getDefaultEncoding());
@@ -732,40 +713,39 @@ public class Heidi extends BaseApi implements OpacApi {
             }
         }
 
-        List<Map<String, String>> lent = new ArrayList<>();
+        List<LentItem> lent = new ArrayList<>();
         for (Element tr : doc.select("table.kontopos tr")) {
-            Map<String, String> row = new HashMap<>();
+            LentItem item = new LentItem();
             Element desc = tr.child(1).select("label").first();
             String dates = tr.child(2).text().trim();
-            String kk = getQueryParamsFirst(
-                    tr.child(1).select("a").first().absUrl("href")).get(
-                    "katkey");
-            row.put(AccountData.KEY_LENT_ID, kk);
+            if (tr.child(1).select("a").size() > 0) {
+                String kk = getQueryParamsFirst(
+                        tr.child(1).select("a").first().absUrl("href")).get(
+                        "katkey");
+                item.setId(kk);
+            }
 
             int i = 0;
             for (Node node : desc.childNodes()) {
                 if (node instanceof TextNode) {
                     String text = ((TextNode) node).text().trim();
                     if (i == 0) {
-                        row.put(AccountData.KEY_LENT_AUTHOR, text);
+                        item.setAuthor(text);
                     } else if (i == 1) {
-                        row.put(AccountData.KEY_LENT_TITLE, text);
+                        item.setTitle(text);
                     } else if (text.contains("Mediennummer")) {
-                        row.put(AccountData.KEY_LENT_BARCODE,
-                                text.replace("Mediennummer: ", ""));
+                        item.setBarcode(text.replace("Mediennummer: ", ""));
                     }
                     i++;
                 }
             }
 
             if (tr.child(0).select("input").size() == 1) {
-                row.put(AccountData.KEY_LENT_LINK, tr.child(0).select("input")
-                                                     .first().val());
-                row.put(AccountData.KEY_LENT_RENEWABLE, "Y");
+                item.setProlongData(tr.child(0).select("input").first().val());
+                item.setRenewable(true);
             } else {
-                row.put(AccountData.KEY_LENT_LINK,
-                        "§" + tr.child(0).select("span").first().attr("class"));
-                row.put(AccountData.KEY_LENT_RENEWABLE, "N");
+                item.setProlongData("§" + tr.child(0).select("span").first().attr("class"));
+                item.setRenewable(false);
             }
 
             String todate = dates;
@@ -773,19 +753,17 @@ public class Heidi extends BaseApi implements OpacApi {
                 String[] datesplit = todate.split("-");
                 todate = datesplit[1].trim();
             }
-            row.put(AccountData.KEY_LENT_DEADLINE, todate);
             try {
-                row.put(AccountData.KEY_LENT_DEADLINE_TIMESTAMP, String
-                        .valueOf(sdf.parse(todate.substring(0, 10)).getTime()));
-            } catch (ParseException e) {
+                item.setDeadline(fmt.parseLocalDate(todate.substring(0, 10)));
+            } catch (IllegalArgumentException e) {
                 e.printStackTrace();
             }
 
-            lent.add(row);
+            lent.add(item);
         }
         adata.setLent(lent);
 
-        List<Map<String, String>> reservations = new ArrayList<>();
+        List<ReservedItem> reservations = new ArrayList<>();
         html = httpGet(opac_url + "/konto.cgi?konto=v&sess=" + sessid,
                 getDefaultEncoding());
         reservations.addAll(parse_reservations(html));
@@ -798,23 +776,22 @@ public class Heidi extends BaseApi implements OpacApi {
         return adata;
     }
 
-    protected List<Map<String, String>> parse_reservations(String html) {
+    protected List<ReservedItem> parse_reservations(String html) {
         Document doc = Jsoup.parse(html);
-        List<Map<String, String>> reservations = new ArrayList<>();
+        List<ReservedItem> reservations = new ArrayList<>();
+        DateTimeFormatter fmt = DateTimeFormat.forPattern("dd.MM.yyyy").withLocale(Locale.GERMAN);
 
         for (Element tr : doc.select("table.kontopos tr")) {
-            Map<String, String> row = new HashMap<>();
+            ReservedItem item = new ReservedItem();
             Element desc = tr.child(1).select("label").first();
             Element pos = tr.child(3);
             if (tr.child(1).select("a").size() > 0) {
                 String kk = getQueryParamsFirst(
-                        tr.child(1).select("a").first().absUrl("href")).get(
-                        "katkey");
-                row.put(AccountData.KEY_RESERVATION_ID, kk);
+                        tr.child(1).select("a").first().absUrl("href")).get("katkey");
+                item.setId(kk);
             }
             if (tr.child(0).select("input").size() > 0) {
-                row.put(AccountData.KEY_RESERVATION_CANCEL,
-                        tr.child(0).select("input").first().val());
+                item.setCancelData(tr.child(0).select("input").first().val());
             }
 
             int i = 0;
@@ -822,9 +799,9 @@ public class Heidi extends BaseApi implements OpacApi {
                 if (node instanceof TextNode) {
                     String text = ((TextNode) node).text().trim();
                     if (i == 0) {
-                        row.put(AccountData.KEY_RESERVATION_AUTHOR, text);
+                        item.setAuthor(text);
                     } else if (i == 1) {
-                        row.put(AccountData.KEY_RESERVATION_TITLE, text);
+                        item.setTitle(text);
                     }
                     i++;
                 }
@@ -834,14 +811,18 @@ public class Heidi extends BaseApi implements OpacApi {
                 if (node instanceof TextNode) {
                     String text = ((TextNode) node).text().trim();
                     if (i == 0 && text.contains("")) {
-                        row.put(AccountData.KEY_RESERVATION_READY, text);
+                        try {
+                            item.setReadyDate(fmt.parseLocalDate(text));
+                        } catch (IllegalArgumentException e) {
+                            item.setStatus(text);
+                        }
                     } else if (i == 1) {
-                        row.put(AccountData.KEY_RESERVATION_BRANCH, text);
+                        item.setBranch(text);
                     }
                     i++;
                 }
             }
-            reservations.add(row);
+            reservations.add(item);
         }
         return reservations;
     }

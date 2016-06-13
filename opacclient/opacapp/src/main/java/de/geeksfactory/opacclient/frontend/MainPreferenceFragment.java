@@ -23,21 +23,25 @@ package de.geeksfactory.opacclient.frontend;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
-import android.preference.Preference;
-import android.preference.PreferenceCategory;
-
-import com.github.machinarius.preferencefragment.PreferenceFragment;
+import android.support.v7.preference.CheckBoxPreference;
+import android.support.v7.preference.ListPreference;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceCategory;
+import android.support.v7.preference.PreferenceFragmentCompat;
+import android.support.v7.preference.PreferenceManager;
 
 import de.geeksfactory.opacclient.OpacClient;
 import de.geeksfactory.opacclient.R;
-import de.geeksfactory.opacclient.reminder.ReminderCheckService;
+import de.geeksfactory.opacclient.reminder.ReminderHelper;
+import de.geeksfactory.opacclient.reminder.SyncAccountService;
 import de.geeksfactory.opacclient.storage.AccountDataSource;
 import de.geeksfactory.opacclient.storage.JsonSearchFieldDataSource;
 import de.geeksfactory.opacclient.storage.SearchFieldDataSource;
 
-public class MainPreferenceFragment extends PreferenceFragment {
+public class MainPreferenceFragment extends PreferenceFragmentCompat {
 
     protected Activity context;
 
@@ -47,8 +51,7 @@ public class MainPreferenceFragment extends PreferenceFragment {
     }
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         this.context = getActivity();
 
         addPreferencesFromResource(R.xml.settings);
@@ -56,7 +59,9 @@ public class MainPreferenceFragment extends PreferenceFragment {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.ICE_CREAM_SANDWICH
                 || !context.getPackageManager()
                            .hasSystemFeature("android.hardware.nfc")) {
-            findPreference("nfc_search").setEnabled(false);
+            if (findPreference("nfc_search") != null) {
+                findPreference("nfc_search").setEnabled(false);
+            }
         }
 
         Preference assistant = findPreference("accounts");
@@ -74,26 +79,70 @@ public class MainPreferenceFragment extends PreferenceFragment {
                     .removePreference(findPreference("email"));
         }
 
+        CheckBoxPreference notification =
+                (CheckBoxPreference) findPreference("notification_service");
+        if (notification != null) {
+            notification.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
+                public boolean onPreferenceChange(Preference preference, Object newValue) {
+                    boolean enabled = (Boolean) newValue;
+                    new ReminderHelper((OpacClient) getActivity().getApplication())
+                            .updateAlarms(enabled);
+                    return true;
+                }
+            });
+        }
+
+        ListPreference warning = (ListPreference) findPreference("notification_warning");
+        if (warning != null) {
+            warning.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
+                public boolean onPreferenceChange(Preference preference, Object newValue) {
+                    SharedPreferences prefs = PreferenceManager
+                            .getDefaultSharedPreferences(getActivity());
+                    //int oldWarning = Integer.parseInt(prefs.getString("notification_warning", "3"));
+
+                    int newWarning = Integer.parseInt((String) newValue);
+                    new ReminderHelper((OpacClient) getActivity().getApplication())
+                            .updateAlarms(newWarning);
+                    return true;
+                }
+            });
+        }
+
+        Preference meta_run_check = findPreference("meta_run_check");
+        if (meta_run_check != null) {
+            meta_run_check.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference arg0) {
+                    Intent i = new Intent(context, SyncAccountService.class);
+                    context.startService(i);
+                    return false;
+                }
+            });
+        }
+
         Preference meta = findPreference("meta_clear");
-        meta.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
-            @Override
-            public boolean onPreferenceClick(Preference arg0) {
-                AccountDataSource adata = new AccountDataSource(
-                        context);
-                adata.open();
-                adata.invalidateCachedData();
-                adata.notificationClearCache(true);
-                adata.close();
+        if (meta != null) {
+            meta.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference arg0) {
+                    AccountDataSource adata = new AccountDataSource(context);
+                    adata.invalidateCachedData();
+                    new ReminderHelper((OpacClient) context.getApplication()).updateAlarms(-1);
 
-                SearchFieldDataSource sfdata = new JsonSearchFieldDataSource(
-                        context);
-                sfdata.clearAll();
+                    SearchFieldDataSource sfdata = new JsonSearchFieldDataSource(context);
+                    sfdata.clearAll();
 
-                Intent i = new Intent(context,
-                        ReminderCheckService.class);
-                context.startService(i);
-                return false;
-            }
-        });
+                    SharedPreferences sp =
+                            PreferenceManager.getDefaultSharedPreferences(getActivity());
+                    sp.edit().remove("reservation_fee_warning_ignore").apply();
+
+                    Intent i = new Intent(context, SyncAccountService.class);
+                    context.startService(i);
+                    return false;
+                }
+            });
+        }
     }
 }
