@@ -15,6 +15,12 @@
         android:title="@string/star">
     </item>
     <item
+        android:id="@+id/action_print"
+        android:icon="@drawable/ic_print_white_24dp"
+        app:showAsAction="ifRoom"
+        android:title="@string/print">
+    </item>
+    <item
         android:id="@+id/action_reservation"
         app:showAsAction="ifRoom|withText"
         android:title="@string/reserve">
